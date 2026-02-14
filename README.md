@@ -51,8 +51,15 @@ pip install numpy numba pygame
 
 ### Step 4: Run the Visualizer
 
+**From the parent directory** (recommended):
 ```bash
+cd ..  # Go to parent of MandelbrotVisualizer folder
 python -m MandelbrotVisualizer
+```
+
+**Or from inside the project folder**:
+```bash
+python __main__.py
 ```
 
 > **Note**: The first run will take a few seconds while Numba compiles the JIT functions. Subsequent runs will be faster due to caching.
@@ -102,42 +109,42 @@ The interactive menu in the top-right corner provides:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              MandelbrotApp                                  │
 │                         (Main Application Loop)                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  • Event handling (zoom, pan, keyboard)                              │   │
-│  │  • Render timing & coordination                                      │   │
-│  │  • Display surface management                                        │   │
-│  │  • History stack for zoom-out                                        │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  • Event handling (zoom, pan, keyboard)                             │    │
+│  │  • Render timing & coordination                                     │    │
+│  │  • Display surface management                                       │    │
+│  │  • History stack for zoom-out                                       │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
 │                                    │                                        │
-│                    ┌───────────────┴───────────────┐                       │
+│                    ┌───────────────┴───────────────┐                        │
 │                    ▼                               ▼                        │
-│  ┌─────────────────────────────┐   ┌─────────────────────────────┐        │
-│  │     MandelbrotRenderer      │   │           Menu               │        │
-│  │   (Async Rendering Engine)  │   │    (Interactive Settings)    │        │
-│  │                             │   │                              │        │
-│  │  • Background threads       │   │  • Dropdowns (iter, colors)  │        │
-│  │  • Iteration data cache     │   │  • Function selector         │        │
-│  │  • Prefetch cache           │   │  • Custom gradient editor    │        │
-│  │  • Incremental rendering    │   │  • Custom formula input      │        │
-│  └──────────────┬──────────────┘   └──────────────────────────────┘        │
+│  ┌─────────────────────────────┐   ┌─────────────────────────────┐          │
+│  │     MandelbrotRenderer      │   │           Menu              │          │
+│  │   (Async Rendering Engine)  │   │    (Interactive Settings)   │          │
+│  │                             │   │                             │          │
+│  │  • Background threads       │   │  • Dropdowns (iter, colors) │          │
+│  │  • Iteration data cache     │   │  • Function selector        │          │
+│  │  • Prefetch cache           │   │  • Custom gradient editor   │          │
+│  │  • Incremental rendering    │   │  • Custom formula input     │          │
+│  └──────────────┬──────────────┘   └─────────────────────────────┘          │
 │                 │                                                           │
 │                 ▼                                                           │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                        Compute Module (Numba JIT)                    │   │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │   │
-│  │  │ compute_mandelbrot│  │  apply_colormap  │  │   downscale_2x   │   │   │
-│  │  │  (full/partial)   │  │     _smooth      │  │  (anti-aliasing) │   │   │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘   │   │
-│  │                                                                      │   │
-│  │  • Parallel iteration using prange                                   │   │
-│  │  • 20+ iterate_function variants                                     │   │
-│  │  • Smooth coloring with fractional escape counts                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                        Compute Module (Numba JIT)                   │    │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │    │
+│  │  │compute_mandelbrot│  │  apply_colormap  │  │   downscale_2x   │   │    │
+│  │  │  (full/partial)  │  │     _smooth      │  │  (anti-aliasing) │   │    │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘   │    │
+│  │                                                                     │    │
+│  │  • Parallel iteration using prange                                  │    │
+│  │  • 20+ iterate_function variants                                    │    │
+│  │  • Smooth coloring with fractional escape counts                    │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                           Colormaps Module                           │   │
-│  │                    4096-color gradient definitions                   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                           Colormaps Module                          │    │
+│  │                    4096-color gradient definitions                  │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -166,12 +173,12 @@ User Input (zoom/pan)
           │
           ▼
 ┌───────────────────────────────────────────────┐
-│              Compute Pipeline                  │
-│  ┌─────────────┐   ┌─────────┐   ┌─────────┐ │
-│  │ Mandelbrot  │──▶│ Apply   │──▶│Downscale│ │
-│  │ Iteration   │   │Colormap │   │   2x    │ │
-│  │ (parallel)  │   │ (smooth)│   │  (AA)   │ │
-│  └─────────────┘   └─────────┘   └─────────┘ │
+│              Compute Pipeline                 │
+│  ┌─────────────┐   ┌─────────┐   ┌─────────┐  │
+│  │ Mandelbrot  │──▶│ Apply   │──▶│Downscale│  │
+│  │ Iteration   │   │Colormap │   │   2x    │  │
+│  │ (parallel)  │   │ (smooth)│   │  (AA)   │  │
+│  └─────────────┘   └─────────┘   └─────────┘  │
 └───────────────────────────────────────────────┘
           │
           ▼
@@ -233,14 +240,14 @@ This eliminates jagged edges without expensive multi-sample techniques.
 When panning at the same zoom level, only newly visible regions are computed:
 
 ```
-┌───────┬───────────────────────┐
-│ NEW   │                       │
-│(compute)│                      │
-├───────┤    CACHED DATA        │
-│       │   (reused from        │
-│       │    previous frame)    │
-│       │                       │
-└───────┴───────────────────────┘
+┌─────────┬───────────────────────┐
+│ NEW     │                       │
+│(compute)│                       │
+├─────────┤    CACHED DATA        │
+│         │   (reused from        │
+│         │    previous frame)    │
+│         │                       │
+└─────────┴───────────────────────┘
 ```
 
 The renderer detects overlapping regions and copies cached iteration data, computing only the exposed strips.
@@ -378,6 +385,16 @@ This shouldn't happen with the smooth coloring algorithm. If you see banding:
 1. Ensure you're using a recent version
 2. Try a different colormap
 3. Increase max iterations
+
+### ModuleNotFoundError: No module named '...'
+
+This occurs when Numba's compiled cache references an old module name. Clear the cache:
+
+```bash
+rm -rf __pycache__/*.nbc __pycache__/*.nbi
+```
+
+Then run again—the functions will recompile with the correct module name.
 
 ---
 
