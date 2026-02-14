@@ -91,14 +91,6 @@ The interactive menu in the top-right corner provides:
 
 ![Menu demo](images/menu-demo.png)
 
-### Exploring Interesting Regions
-
-1. **Seahorse Valley**: Zoom into the area around (-0.75, 0.1) for spiraling seahorse shapes
-2. **Elephant Valley**: Explore near (-0.1, 0.65) for elephant-trunk patterns
-3. **Mini Mandelbrots**: Deep zoom into filament tips to find self-similar copies
-
-[IMAGE_PLACEHOLDER_{side-by-side grid showing 4 different interesting regions of the Mandelbrot set}]
-
 ---
 
 ## Architecture Overview
@@ -219,8 +211,6 @@ for py in prange(height):  # Rows computed in parallel across CPU cores
         # Per-pixel iteration
 ```
 
-[IMAGE_PLACEHOLDER_{diagram showing parallel work distribution across 8 CPU cores}]
-
 ### 3. Supersampled Anti-Aliasing (2x SSAA)
 
 Rendering occurs at 2x resolution, then downscaled via box filter:
@@ -275,7 +265,8 @@ nu = log(log_zn / log(escape_radius)) / log(degree)
 smooth_iter = iteration + 1 - nu
 ```
 
-[IMAGE_PLACEHOLDER_{comparison showing color banding vs smooth coloring side by side}]
+<!--[IMAGE_PLACEHOLDER_{comparison showing color banding vs smooth coloring side by side}]
+-->
 
 ### 7. Render Margin (Overscan)
 
@@ -334,7 +325,8 @@ Main Thread          Render Thread
 | 14 | Cosine | c·cos(z) |
 | 15-19 | More variants | Various combinations |
 
-[IMAGE_PLACEHOLDER_{grid of 6 images showing different fractal functions like Tricorn, Burning Ship, and Sine}]
+<!--[IMAGE_PLACEHOLDER_{grid of 6 images showing different fractal functions like Tricorn, Burning Ship, and Sine}]
+-->
 
 ---
 
