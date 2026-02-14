@@ -1,7 +1,7 @@
 # MandelbrotVisualizer
 A high-performance, interactive fractal visualizer built with Python, featuring real-time exploration of the Mandelbrot set and 20+ variation functions.
 
-[IMAGE_PLACEHOLDER_{screenshot of the visualizer showing a colorful zoomed-in view of the Mandelbrot set with the menu panel visible}]
+![App demo](images/app-demo.png)
 
 ## Features
 
@@ -89,7 +89,7 @@ The interactive menu in the top-right corner provides:
 - **Escape Radius**: Adjust the escape threshold for iteration
 - **Custom Formula**: Enter your own mathematical formula
 
-[IMAGE_PLACEHOLDER_{close-up of the menu panel showing dropdown selections for colormap and function}]
+![Menu demo](images/menu-demo.png)
 
 ### Exploring Interesting Regions
 
