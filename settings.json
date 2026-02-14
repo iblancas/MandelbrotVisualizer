@@ -1,0 +1,40 @@
+{
+    "iteration_functions": [
+        {"id": 0, "name": "z^2 + c", "description": "Standard Mandelbrot"},
+        {"id": 1, "name": "z^3 + c", "description": "Multibrot degree 3"},
+        {"id": 2, "name": "z^4 + c", "description": "Multibrot degree 4"},
+        {"id": 3, "name": "z^5 + c", "description": "Multibrot degree 5"},
+        {"id": 8, "name": "z^6 + c", "description": "Multibrot degree 6"},
+        {"id": 9, "name": "z^7 + c", "description": "Multibrot degree 7"},
+        {"id": 10, "name": "z^8 + c", "description": "Multibrot degree 8"},
+        {"id": 4, "name": "conj(z)^2 + c", "description": "Tricorn / Mandelbar"},
+        {"id": 5, "name": "c*exp(z)", "description": "Exponential map"},
+        {"id": 6, "name": "c*sin(z)", "description": "Sine fractal"},
+        {"id": 14, "name": "c*cos(z)", "description": "Cosine fractal"},
+        {"id": 7, "name": "z^2 + z + c", "description": "Quadratic variant"},
+        {"id": 12, "name": "z^3 + z + c", "description": "Cubic variant"},
+        {"id": 13, "name": "z^4 + z + c", "description": "Quartic variant"},
+        {"id": 15, "name": "z^2 - z + c", "description": "Quadratic minus variant"},
+        {"id": 19, "name": "z^3 - z + c", "description": "Cubic minus variant"},
+        {"id": 11, "name": "z^2 + c*z", "description": "Linear term variant"},
+        {"id": 16, "name": "z^3 + c*z", "description": "Cubic Julia variant"},
+        {"id": 17, "name": "z^2 + c^2", "description": "Square c variant"},
+        {"id": 18, "name": "(z^2+c)/(z^2-c)", "description": "Rational"}
+    ],
+    "colormaps": [
+        {"name": "Hot", "description": "Black to red to yellow to white"},
+        {"name": "Ocean", "description": "Deep blue to cyan to white"},
+        {"name": "Forest", "description": "Dark green to lime to yellow"},
+        {"name": "Purple", "description": "Deep purple to magenta to pink"},
+        {"name": "Rainbow", "description": "Cycling hues"},
+        {"name": "Grayscale", "description": "Black to white"}
+    ],
+    "default_settings": {
+        "max_iterations": 512,
+        "colormap": "Hot",
+        "function_id": 0,
+        "escape_radius": 2.0
+    },
+    "iteration_options": [64, 128, 256, 512, 1024, 2048],
+    "escape_radius_options": [2, 4, 8, 16, 32, 64, 128, 256]
+}
