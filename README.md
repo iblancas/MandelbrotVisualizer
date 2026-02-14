@@ -1,5 +1,5 @@
 # MandelbrotVisualizer
-A high-performance, interactive fractal visualizer built with Python, featuring real-time exploration of the Mandelbrot set and 20+ variation functions.
+This is a mini-project developed with the aid of Claude Opus 4.5 that models a high-performance, interactive fractal visualizer built with Python, featuring real-time exploration of the Mandelbrot set and 20+ variation functions.
 
 ![App demo](images/app-demo.png)
 
@@ -387,19 +387,3 @@ rm -rf __pycache__/*.nbc __pycache__/*.nbi
 ```
 
 Then run again—the functions will recompile with the correct module name.
-
----
-
-## License
-
-MIT License - See LICENSE file for details.
-
----
-
-## Contributing
-
-Contributions are welcome! Please open an issue or pull request for:
-- New fractal functions
-- Additional colormaps
-- Performance improvements
-- Bug fixes
