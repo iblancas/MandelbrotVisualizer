@@ -1,34 +1,181 @@
 {
     "iteration_functions": [
-        {"id": 0, "name": "z^2 + c", "description": "Standard Mandelbrot"},
-        {"id": 1, "name": "z^3 + c", "description": "Multibrot degree 3"},
-        {"id": 2, "name": "z^4 + c", "description": "Multibrot degree 4"},
-        {"id": 3, "name": "z^5 + c", "description": "Multibrot degree 5"},
-        {"id": 8, "name": "z^6 + c", "description": "Multibrot degree 6"},
-        {"id": 9, "name": "z^7 + c", "description": "Multibrot degree 7"},
-        {"id": 10, "name": "z^8 + c", "description": "Multibrot degree 8"},
-        {"id": 4, "name": "conj(z)^2 + c", "description": "Tricorn / Mandelbar"},
-        {"id": 5, "name": "c*exp(z)", "description": "Exponential map"},
-        {"id": 6, "name": "c*sin(z)", "description": "Sine fractal"},
-        {"id": 14, "name": "c*cos(z)", "description": "Cosine fractal"},
-        {"id": 7, "name": "z^2 + z + c", "description": "Quadratic variant"},
-        {"id": 12, "name": "z^3 + z + c", "description": "Cubic variant"},
-        {"id": 13, "name": "z^4 + z + c", "description": "Quartic variant"},
-        {"id": 15, "name": "z^2 - z + c", "description": "Quadratic minus variant"},
-        {"id": 19, "name": "z^3 - z + c", "description": "Cubic minus variant"},
-        {"id": 11, "name": "z^2 + c*z", "description": "Linear term variant"},
-        {"id": 16, "name": "z^3 + c*z", "description": "Cubic Julia variant"},
-        {"id": 17, "name": "z^2 + c^2", "description": "Square c variant"},
-        {"id": 18, "name": "(z^2+c)/(z^2-c)", "description": "Rational"}
+        {
+            "id": 0,
+            "name": "z^2 + c"
+        },
+        {
+            "id": 1,
+            "name": "z^3 + c"
+        },
+        {
+            "id": 2,
+            "name": "z^4 + c"
+        },
+        {
+            "id": 3,
+            "name": "z^5 + c"
+        },
+        {
+            "id": 8,
+            "name": "z^6 + c"
+        },
+        {
+            "id": 9,
+            "name": "z^7 + c"
+        },
+        {
+            "id": 10,
+            "name": "z^8 + c"
+        },
+        {
+            "id": 4,
+            "name": "conj(z)^2 + c"
+        },
+        {
+            "id": 5,
+            "name": "c*exp(z)"
+        },
+        {
+            "id": 6,
+            "name": "c*sin(z)"
+        },
+        {
+            "id": 14,
+            "name": "c*cos(z)"
+        },
+        {
+            "id": 7,
+            "name": "z^2 + z + c"
+        },
+        {
+            "id": 12,
+            "name": "z^3 + z + c"
+        },
+        {
+            "id": 13,
+            "name": "z^4 + z + c"
+        },
+        {
+            "id": 15,
+            "name": "z^2 - z + c"
+        },
+        {
+            "id": 19,
+            "name": "z^3 - z + c"
+        },
+        {
+            "id": 11,
+            "name": "z^2 + c*z"
+        },
+        {
+            "id": 16,
+            "name": "z^3 + c*z"
+        },
+        {
+            "id": 17,
+            "name": "z^2 + c^2"
+        },
+        {
+            "id": 18,
+            "name": "(z^2+c)/(z^2-c)"
+        }
     ],
-    "colormaps": [
-        {"name": "Hot", "description": "Black to red to yellow to white"},
-        {"name": "Ocean", "description": "Deep blue to cyan to white"},
-        {"name": "Forest", "description": "Dark green to lime to yellow"},
-        {"name": "Purple", "description": "Deep purple to magenta to pink"},
-        {"name": "Rainbow", "description": "Cycling hues"},
-        {"name": "Grayscale", "description": "Black to white"}
+    "formula_patterns": [
+        {
+            "pattern": "z**2+c",
+            "id": 0
+        },
+        {
+            "pattern": "z**3+c",
+            "id": 1
+        },
+        {
+            "pattern": "z**4+c",
+            "id": 2
+        },
+        {
+            "pattern": "z**5+c",
+            "id": 3
+        },
+        {
+            "pattern": "z**6+c",
+            "id": 8
+        },
+        {
+            "pattern": "z**7+c",
+            "id": 9
+        },
+        {
+            "pattern": "z**8+c",
+            "id": 10
+        },
+        {
+            "pattern": "conj(z)**2+c",
+            "id": 4
+        },
+        {
+            "pattern": "c*exp(z)",
+            "id": 5
+        },
+        {
+            "pattern": "c*sin(z)",
+            "id": 6
+        },
+        {
+            "pattern": "c*cos(z)",
+            "id": 14
+        },
+        {
+            "pattern": "z**2+z+c",
+            "id": 7
+        },
+        {
+            "pattern": "z**3+z+c",
+            "id": 12
+        },
+        {
+            "pattern": "z**4+z+c",
+            "id": 13
+        },
+        {
+            "pattern": "z**2-z+c",
+            "id": 15
+        },
+        {
+            "pattern": "z**3-z+c",
+            "id": 19
+        },
+        {
+            "pattern": "z**2+c*z",
+            "id": 11
+        },
+        {
+            "pattern": "z**3+c*z",
+            "id": 16
+        },
+        {
+            "pattern": "z*(z**2+c)",
+            "id": 16
+        },
+        {
+            "pattern": "z**2+c**2",
+            "id": 17
+        },
+        {
+            "pattern": "(z**2+c)/(z**2-c)",
+            "id": 18
+        }
     ],
+    "power_to_func_id": {
+        "2": 0,
+        "3": 1,
+        "4": 2,
+        "5": 3,
+        "6": 8,
+        "7": 9,
+        "8": 10
+    },
     "default_settings": {
         "max_iterations": 512,
         "colormap": "Hot",

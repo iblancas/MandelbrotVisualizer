@@ -7,6 +7,7 @@ The MandelbrotRenderer class handles:
 - Prefetching of adjacent regions for smoother interaction
 - Supersampled anti-aliasing (2x by default)
 - Margin/overscan for smooth pan transitions
+- GPU acceleration when available (via PyTorch)
 """
 
 import numpy as np
@@ -20,6 +21,15 @@ from .compute import (
     downscale_2x
 )
 from .colormaps import get_default_colormap
+
+# Try to import GPU compute module
+try:
+    from .compute_gpu import GPUCompute, get_gpu_compute, is_gpu_available, should_default_to_gpu
+    GPU_AVAILABLE = True
+except ImportError:
+    GPU_AVAILABLE = False
+    is_gpu_available = lambda: False
+    should_default_to_gpu = lambda: False
 
 
 class MandelbrotRenderer:
@@ -40,10 +50,11 @@ class MandelbrotRenderer:
         width, height: Display dimensions
         max_iter: Maximum iteration count
         margin: Extra rendering margin (fraction of width) for smooth panning
+        use_gpu: Whether to use GPU acceleration
     """
     
     def __init__(self, width, height, max_iter, supersample=2, margin=0.15,
-                 func_id=0, escape_radius=2.0, custom_formula=None):
+                 func_id=0, escape_radius=2.0, custom_formula=None, use_gpu=None):
         """
         Initialize the renderer.
         
@@ -55,6 +66,7 @@ class MandelbrotRenderer:
             func_id: Which iteration function to use (default 0 = z² + c)
             escape_radius: Escape threshold for iteration (default 2.0)
             custom_formula: Custom formula string (overrides func_id if set)
+            use_gpu: Whether to use GPU acceleration (None = auto-detect best option)
         """
         self.width = width
         self.height = height
@@ -68,6 +80,15 @@ class MandelbrotRenderer:
         if custom_formula:
             self.custom_formula = custom_formula
             self._prepared_formula = prepare_custom_formula(custom_formula)
+        
+        # GPU settings - auto-detect best default if not specified
+        if use_gpu is None:
+            # Only default to GPU for CUDA; MPS is slower than Numba for typical renders
+            use_gpu = GPU_AVAILABLE and should_default_to_gpu()
+        self.use_gpu = use_gpu and GPU_AVAILABLE and is_gpu_available()
+        self._gpu_compute = None
+        if self.use_gpu:
+            self._gpu_compute = get_gpu_compute(prefer_gpu=True)
         
         # With margin, we render a larger image
         self.margin_pixels = int(width * margin)
@@ -178,30 +199,23 @@ class MandelbrotRenderer:
                 if 0.99 < scale_ratio_x < 1.01 and 0.99 < scale_ratio_y < 1.01:
                     can_reuse = True
             
-            if can_reuse and self._prepared_formula is None:
+            # GPU doesn't support incremental rendering (yet), but it's fast enough
+            if can_reuse and self._prepared_formula is None and not self.use_gpu:
                 data = self._compute_incremental(bounds, old_cache_bounds, new_w, new_h)
             else:
-                # Full recompute
-                if self._prepared_formula is not None:
-                    # Use custom formula (slower, non-JIT)
-                    data = compute_mandelbrot_custom(
-                        bounds[0], bounds[1], bounds[2], bounds[3],
-                        self.render_width, self.render_height, self.max_iter,
-                        self._prepared_formula, self.escape_radius
-                    )
-                else:
-                    data = compute_mandelbrot(
-                        bounds[0], bounds[1], bounds[2], bounds[3],
-                        self.render_width, self.render_height, self.max_iter,
-                        self.func_id, self.escape_radius
-                    )
+                # Full recompute (using GPU or CPU)
+                data = self._compute_full(bounds)
             
             # Update cache
             self.data_cache[:] = data
             
-            # Apply colormap and downscale
-            apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb_hi)
-            downscale_2x(self.rgb_hi, self.rgb)
+            # Apply colormap and downscale (using GPU or CPU)
+            if self.use_gpu and self._gpu_compute is not None:
+                self._gpu_compute.apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb_hi)
+                self._gpu_compute.downscale_2x(self.rgb_hi, self.rgb)
+            else:
+                apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb_hi)
+                downscale_2x(self.rgb_hi, self.rgb)
             
             with self.lock:
                 self.cache_bounds = bounds
@@ -212,6 +226,34 @@ class MandelbrotRenderer:
                     # Start prefetching in background
                     self._start_prefetch(bounds)
                     break
+    
+    def _compute_full(self, bounds):
+        """
+        Compute full Mandelbrot for bounds using best available method.
+        
+        Uses GPU if available and enabled, otherwise falls back to CPU.
+        """
+        if self._prepared_formula is not None:
+            # Custom formula: always use CPU (non-JIT)
+            return compute_mandelbrot_custom(
+                bounds[0], bounds[1], bounds[2], bounds[3],
+                self.render_width, self.render_height, self.max_iter,
+                self._prepared_formula, self.escape_radius
+            )
+        elif self.use_gpu and self._gpu_compute is not None:
+            # Use GPU acceleration
+            return self._gpu_compute.compute_mandelbrot(
+                bounds[0], bounds[1], bounds[2], bounds[3],
+                self.render_width, self.render_height, self.max_iter,
+                self.func_id, self.escape_radius
+            )
+        else:
+            # Use CPU (Numba JIT)
+            return compute_mandelbrot(
+                bounds[0], bounds[1], bounds[2], bounds[3],
+                self.render_width, self.render_height, self.max_iter,
+                self.func_id, self.escape_radius
+            )
     
     def _compute_incremental(self, new_bounds, old_bounds, new_w, new_h):
         """
@@ -330,17 +372,18 @@ class MandelbrotRenderer:
                 if self.prefetch_base_bounds != base_bounds:
                     break
             
-            # Compute this region
-            data = compute_mandelbrot(
-                bounds[0], bounds[1], bounds[2], bounds[3],
-                self.render_width, self.render_height, self.max_iter,
-                self.func_id, self.escape_radius
-            )
+            # Compute this region (using GPU or CPU)
+            data = self._compute_full(bounds)
             
             rgb_hi = np.zeros((self.render_height, self.render_width, 3), dtype=np.uint8)
             rgb = np.zeros((self.full_height, self.full_width, 3), dtype=np.uint8)
-            apply_colormap_smooth(data, self.max_iter, self.colormap, rgb_hi)
-            downscale_2x(rgb_hi, rgb)
+            
+            if self.use_gpu and self._gpu_compute is not None:
+                self._gpu_compute.apply_colormap_smooth(data, self.max_iter, self.colormap, rgb_hi)
+                self._gpu_compute.downscale_2x(rgb_hi, rgb)
+            else:
+                apply_colormap_smooth(data, self.max_iter, self.colormap, rgb_hi)
+                downscale_2x(rgb_hi, rgb)
             
             with self.prefetch_lock:
                 if self.prefetch_base_bounds == base_bounds:
@@ -389,7 +432,7 @@ class MandelbrotRenderer:
         return None, None
     
     def update_settings(self, max_iter=None, colormap=None, func_id=None, escape_radius=None,
-                         custom_formula=None):
+                         custom_formula=None, use_gpu=None):
         """
         Update rendering settings.
         
@@ -401,6 +444,7 @@ class MandelbrotRenderer:
             func_id: New iteration function ID (or None to keep current)
             escape_radius: New escape threshold (or None to keep current)
             custom_formula: Custom formula string (or None to use func_id, '' to clear)
+            use_gpu: Enable/disable GPU acceleration (or None to keep current)
         
         Returns:
             True if any setting changed, False otherwise
@@ -430,6 +474,14 @@ class MandelbrotRenderer:
                 self.custom_formula = custom_formula
                 self._prepared_formula = prepare_custom_formula(custom_formula)
                 changed = True
+        # Handle GPU toggle
+        if use_gpu is not None:
+            want_gpu = use_gpu and GPU_AVAILABLE and is_gpu_available()
+            if want_gpu != self.use_gpu:
+                self.use_gpu = want_gpu
+                if want_gpu and self._gpu_compute is None:
+                    self._gpu_compute = get_gpu_compute(prefer_gpu=True)
+                changed = True
         if changed:
             # Clear caches since settings changed
             self.cache_bounds = None
@@ -437,3 +489,40 @@ class MandelbrotRenderer:
                 self.prefetch_cache.clear()
                 self.prefetch_base_bounds = None
         return changed
+    
+    def get_gpu_info(self):
+        """
+        Get information about GPU status.
+        
+        Returns:
+            dict with keys:
+            - 'available': bool, whether GPU is available
+            - 'enabled': bool, whether GPU is currently enabled
+            - 'device': str, device name/description
+        """
+        if not GPU_AVAILABLE:
+            return {
+                'available': False,
+                'enabled': False,
+                'device': 'PyTorch not installed'
+            }
+        
+        gpu_compute = get_gpu_compute(prefer_gpu=True)
+        return {
+            'available': gpu_compute.is_gpu,
+            'enabled': self.use_gpu,
+            'device': gpu_compute.get_device_info()
+        }
+    
+    def toggle_gpu(self):
+        """
+        Toggle GPU acceleration on/off.
+        
+        Returns:
+            bool: New GPU enabled state
+        """
+        if not GPU_AVAILABLE or not is_gpu_available():
+            return False
+        
+        self.update_settings(use_gpu=not self.use_gpu)
+        return self.use_gpu

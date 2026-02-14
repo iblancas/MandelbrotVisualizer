@@ -1,0 +1,11 @@
+# Core dependencies
+numpy
+numba
+pygame
+
+# GPU acceleration (optional, but recommended for best performance)
+# Install PyTorch from https://pytorch.org/get-started/locally/
+# For example:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu118  # CUDA 11.8
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121  # CUDA 12.1
+#   pip install torch  # CPU-only or Apple Silicon (MPS)

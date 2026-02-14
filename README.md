@@ -11,6 +11,7 @@ This is a mini-project developed with the aid of Claude Opus 4.5 that models a h
 - **High-resolution export**: Save 4x resolution images to desktop
 - **Async rendering**: UI stays responsive during computation
 - **Smart caching**: Incremental rendering when panning, prefetching for smoother interaction
+- **GPU acceleration**: Optional PyTorch-based GPU computing for NVIDIA (CUDA) and Apple Silicon (MPS)
 
 ---
 
@@ -49,7 +50,28 @@ pip install numpy numba pygame
 | `numba` | JIT compilation for high-performance computation |
 | `pygame` | Window management, rendering, and user input |
 
-### Step 4: Run the Visualizer
+### Step 4 (Optional): Install GPU Support
+
+For significantly faster rendering, install PyTorch to enable GPU acceleration:
+
+**Apple Silicon (M1/M2/M3):**
+```bash
+pip install torch
+```
+
+**NVIDIA GPU (CUDA 11.8):**
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu118
+```
+
+**NVIDIA GPU (CUDA 12.1):**
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+> **Note**: GPU acceleration is automatic when PyTorch is installed. You can toggle it on/off in the settings menu.
+
+### Step 5: Run the Visualizer
 
 **From the parent directory** (recommended):
 ```bash
@@ -88,6 +110,7 @@ The interactive menu in the top-right corner provides:
 - **Function**: Select from 20+ fractal iteration functions
 - **Escape Radius**: Adjust the escape threshold for iteration
 - **Custom Formula**: Enter your own mathematical formula
+- **GPU Acceleration**: Toggle GPU on/off (when PyTorch is installed)
 
 ![Menu demo](images/menu-demo.png)
 

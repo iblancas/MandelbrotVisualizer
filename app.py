@@ -102,6 +102,11 @@ class MandelbrotApp:
                 self.menu.save_requested = False
                 self._save_high_res_image()
             
+            # Check for GPU toggle request from menu
+            if self.menu.gpu_toggle_requested:
+                self.menu.gpu_toggle_requested = False
+                self._handle_gpu_toggle(current_time)
+            
             self._check_render_result()
             self._maybe_start_render(current_time)
             self._draw()
@@ -122,16 +127,34 @@ class MandelbrotApp:
     
     def _init_components(self):
         """Initialize renderer and menu."""
-        self.renderer = MandelbrotRenderer(self.width, self.height, self.max_iter)
+        # use_gpu=None means auto-detect (CUDA=True, MPS=False by default)
+        self.renderer = MandelbrotRenderer(self.width, self.height, self.max_iter, use_gpu=None)
         
         # Menu in top-right corner
         self.menu = Menu(self.width - 250, 10)
         self.menu.max_iter = self.max_iter
+        
+        # Update menu with GPU status
+        self._update_menu_gpu_status()
+    
+    def _update_menu_gpu_status(self):
+        """Update menu with current GPU status from renderer."""
+        gpu_info = self.renderer.get_gpu_info()
+        self.menu.update_gpu_status(
+            available=gpu_info['available'],
+            enabled=gpu_info['enabled'],
+            device_name=gpu_info['device']
+        )
     
     def _warmup_and_initial_render(self):
-        """Warm up JIT and do initial render."""
+        """Warm up JIT/GPU and do initial render."""
         pygame.display.set_caption("Compiling (first run only)...")
         warmup_jit(self.renderer.colormap)
+        
+        # Warm up GPU if available
+        if self.renderer.use_gpu and self.renderer._gpu_compute is not None:
+            pygame.display.set_caption("Warming up GPU...")
+            self.renderer._gpu_compute.warmup(self.renderer.colormap)
         
         # Calculate bounds with margin
         w = self.x_max - self.x_min
@@ -143,12 +166,20 @@ class MandelbrotApp:
             self.y_min - my, self.y_max + my
         )
         
-        # Compute initial image
-        data = compute_mandelbrot(
-            init_bounds[0], init_bounds[1], init_bounds[2], init_bounds[3],
-            self.renderer.render_width, self.renderer.render_height,
-            self.max_iter
-        )
+        # Compute initial image (using GPU or CPU as configured)
+        if self.renderer.use_gpu and self.renderer._gpu_compute is not None:
+            data = self.renderer._gpu_compute.compute_mandelbrot(
+                init_bounds[0], init_bounds[1], init_bounds[2], init_bounds[3],
+                self.renderer.render_width, self.renderer.render_height,
+                self.max_iter
+            )
+        else:
+            data = compute_mandelbrot(
+                init_bounds[0], init_bounds[1], init_bounds[2], init_bounds[3],
+                self.renderer.render_width, self.renderer.render_height,
+                self.max_iter
+            )
+        
         apply_colormap_smooth(
             data, self.max_iter, self.renderer.colormap, self.renderer.rgb_hi
         )
@@ -171,8 +202,14 @@ class MandelbrotApp:
         self.render_bounds = init_bounds
         self.render_history = [(self.current_surface.copy(), init_bounds)]
         
+        # Show GPU status in title
+        gpu_info = self.renderer.get_gpu_info()
+        if gpu_info['enabled']:
+            gpu_status = "GPU"
+        else:
+            gpu_status = "CPU"
         pygame.display.set_caption(
-            "Mandelbrot Set - Scroll to zoom, drag to pan, R to reset"
+            f"Mandelbrot Set [{gpu_status}] - Scroll to zoom, drag to pan, R to reset"
         )
     
     def _handle_events(self, current_time):
@@ -213,6 +250,25 @@ class MandelbrotApp:
             escape_radius=self.menu.escape_radius,
             custom_formula=custom_formula
         )
+        self.last_action_time = current_time
+        self.pending_render = True
+        self.render_history.clear()
+    
+    def _handle_gpu_toggle(self, current_time):
+        """Handle GPU toggle request from menu."""
+        # Toggle GPU in renderer
+        new_gpu_state = self.renderer.toggle_gpu()
+        
+        # Update menu with new status
+        self._update_menu_gpu_status()
+        
+        # Update window title
+        gpu_status = "GPU" if new_gpu_state else "CPU"
+        pygame.display.set_caption(
+            f"Mandelbrot Set [{gpu_status}] - Scroll to zoom, drag to pan, R to reset"
+        )
+        
+        # Force re-render with new compute mode
         self.last_action_time = current_time
         self.pending_render = True
         self.render_history.clear()
@@ -311,9 +367,9 @@ class MandelbrotApp:
         pygame.display.set_caption("Saving high-res image... (this may take a moment)")
         pygame.display.flip()
         
-        # Compute at high resolution
+        # Compute at high resolution (using GPU or CPU as configured)
         if self.renderer._prepared_formula is not None:
-            # Use custom formula (slower)
+            # Use custom formula (slower, CPU only)
             data = compute_mandelbrot_custom(
                 self.x_min, self.x_max, self.y_min, self.y_max,
                 rw, rh,
@@ -321,8 +377,17 @@ class MandelbrotApp:
                 self.renderer._prepared_formula,
                 self.renderer.escape_radius
             )
+        elif self.renderer.use_gpu and self.renderer._gpu_compute is not None:
+            # Use GPU acceleration
+            data = self.renderer._gpu_compute.compute_mandelbrot(
+                self.x_min, self.x_max, self.y_min, self.y_max,
+                rw, rh,
+                self.renderer.max_iter,
+                self.renderer.func_id,
+                self.renderer.escape_radius
+            )
         else:
-            # Use JIT-compiled function
+            # Use CPU (Numba JIT)
             data = compute_mandelbrot(
                 self.x_min, self.x_max, self.y_min, self.y_max,
                 rw, rh,
@@ -331,15 +396,23 @@ class MandelbrotApp:
                 escape_radius=self.renderer.escape_radius
             )
         
-        # Apply colormap
+        # Apply colormap (using GPU or CPU)
         hi_rgb = np.empty((rh, rw, 3), dtype=np.uint8)
-        apply_colormap_smooth(
-            data, self.renderer.max_iter, self.renderer.colormap, hi_rgb
-        )
+        if self.renderer.use_gpu and self.renderer._gpu_compute is not None:
+            self.renderer._gpu_compute.apply_colormap_smooth(
+                data, self.renderer.max_iter, self.renderer.colormap, hi_rgb
+            )
+        else:
+            apply_colormap_smooth(
+                data, self.renderer.max_iter, self.renderer.colormap, hi_rgb
+            )
         
-        # Downscale with 2x supersampling
+        # Downscale with 2x supersampling (using GPU or CPU)
         final_rgb = np.empty((hi_height, hi_width, 3), dtype=np.uint8)
-        downscale_2x(hi_rgb, final_rgb)
+        if self.renderer.use_gpu and self.renderer._gpu_compute is not None:
+            self.renderer._gpu_compute.downscale_2x(hi_rgb, final_rgb)
+        else:
+            downscale_2x(hi_rgb, final_rgb)
         
         # Flip for correct orientation
         final_rgb = np.flipud(final_rgb)
