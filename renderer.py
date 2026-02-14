@@ -121,6 +121,9 @@ class MandelbrotRenderer:
         self.prefetch_lock = threading.Lock()
         self.prefetching = False
         self.prefetch_base_bounds = None  # Bounds we're prefetching around
+        
+        # Shutdown flag for clean thread termination
+        self._shutdown = False
     
     def compute_async(self, x_min, x_max, y_min, y_max):
         """
@@ -168,9 +171,27 @@ class MandelbrotRenderer:
                 thread.start()
         return False
     
+    def cleanup(self):
+        """Clean up resources and signal threads to stop."""
+        self._shutdown = True
+        
+        # Clear GPU resources
+        if self._gpu_compute is not None:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            except Exception:
+                pass
+            self._gpu_compute = None
+        
+        # Clear caches
+        self.prefetch_cache.clear()
+    
     def _compute_thread(self):
         """Background thread for Mandelbrot computation."""
-        while True:
+        while not self._shutdown:
             with self.lock:
                 bounds = self.pending_bounds
                 self.pending_bounds = None
@@ -364,7 +385,9 @@ class MandelbrotRenderer:
         ]
         
         for direction, bounds in prefetch_targets:
-            # Check if we should stop (new render requested or moved away)
+            # Check if we should stop (shutdown, new render requested, or moved away)
+            if self._shutdown:
+                break
             with self.lock:
                 if self.pending_bounds is not None:
                     break

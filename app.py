@@ -8,6 +8,7 @@ Contains the MandelbrotApp class which handles:
 - Interaction between renderer and menu
 """
 
+import atexit
 import pygame
 import numpy as np
 from .renderer import MandelbrotRenderer
@@ -84,12 +85,19 @@ class MandelbrotApp:
         self.pending_render = False
         
         self.running = False
+        self._cleanup_registered = False
+        self._cleaned_up = False
     
     def run(self):
         """Run the application main loop."""
         self._init_pygame()
         self._init_components()
         self._warmup_and_initial_render()
+        
+        # Register cleanup to run on exit
+        if not self._cleanup_registered:
+            atexit.register(self._cleanup)
+            self._cleanup_registered = True
         
         self.running = True
         while self.running:
@@ -113,7 +121,29 @@ class MandelbrotApp:
             
             self.clock.tick(60)
         
-        pygame.quit()
+        self._cleanup()
+    
+    def _cleanup(self):
+        """Clean up all resources properly to prevent segfaults on next run."""
+        # Prevent double cleanup
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+        
+        # Signal renderer to stop threads
+        if self.renderer is not None:
+            self.renderer.cleanup()
+        
+        # Clear surfaces and references
+        self.current_surface = None
+        self.current_rgb = None
+        self.render_history.clear()
+        
+        # Quit pygame
+        try:
+            pygame.quit()
+        except Exception:
+            pass
     
     def _init_pygame(self):
         """Initialize pygame and create window."""
@@ -553,4 +583,9 @@ def run(width=None, height=None, max_iter=None):
     try:
         app.run()
     except KeyboardInterrupt:
-        quit()
+        pass
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        # Ensure cleanup runs even on crash
+        app._cleanup()
