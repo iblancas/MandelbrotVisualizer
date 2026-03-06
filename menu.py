@@ -1,5 +1,4 @@
 """Settings menu for the Mandelbrot visualizer with dropdowns and gradient editor."""
-
 import colorsys
 import json
 import os
@@ -7,24 +6,15 @@ import re
 import numpy as np
 import pygame
 from .colormaps import COLORMAPS, NUM_COLORS
-
-
-def _load_settings():
-    path = os.path.join(os.path.dirname(__file__), 'settings.json')
-    with open(path) as f:
-        return json.load(f)
-
-_SETTINGS = _load_settings()
+from .constants import SETTINGS, FUNC_NAMES, MENU_ORDER, FORMULA_PATTERNS, POWER_TO_FUNC_ID, DEFAULTS, OPTIONS
 
 
 def _hsv_to_rgb(h, s, v):
-    """HSV (0-1) to RGB (0-255)."""
     r, g, b = colorsys.hsv_to_rgb(h, s, v)
     return int(r * 255), int(g * 255), int(b * 255)
 
 
 def _rgb_to_hsv(r, g, b):
-    """RGB (0-255) to HSV (0-1)."""
     return colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
 
 
@@ -88,6 +78,69 @@ class TextInput:
             if self._cursor_timer < 30:
                 cx = rect.left + 6 + (font.render(self.text[:self.cursor_pos], True, color).get_width() if self.text else 0)
                 pygame.draw.line(screen, (220, 220, 220), (cx, rect.top + 4), (cx, rect.bottom - 4), 2)
+
+
+class Slider:
+    """Horizontal slider component for float values."""
+    
+    def __init__(self, x, y, width, min_val, max_val, value, label=""):
+        self.x, self.y, self.width = x, y, width
+        self.height = 20
+        self.min_val, self.max_val = min_val, max_val
+        self.value = value
+        self.label = label
+        self.dragging = False
+    
+    @property
+    def rect(self):
+        return pygame.Rect(self.x, self.y, self.width, self.height)
+    
+    def _val_to_pos(self, val):
+        """Convert value to x position."""
+        t = (val - self.min_val) / (self.max_val - self.min_val)
+        return self.x + int(t * (self.width - 10))
+    
+    def _pos_to_val(self, px):
+        """Convert x position to value."""
+        t = max(0, min(1, (px - self.x) / (self.width - 10)))
+        return self.min_val + t * (self.max_val - self.min_val)
+    
+    def handle_event(self, event):
+        """Returns (handled, value_changed)."""
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self.dragging = True
+                old_val = self.value
+                self.value = self._pos_to_val(event.pos[0])
+                return True, abs(self.value - old_val) > 1e-9
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self.dragging:
+                self.dragging = False
+                return True, False
+        elif event.type == pygame.MOUSEMOTION and self.dragging:
+            old_val = self.value
+            self.value = self._pos_to_val(event.pos[0])
+            return True, abs(self.value - old_val) > 1e-9
+        return False, False
+    
+    def draw(self, screen, font):
+        # Track background
+        pygame.draw.rect(screen, (50, 50, 55), self.rect)
+        pygame.draw.rect(screen, (80, 80, 80), self.rect, 1)
+        
+        # Filled portion
+        fill_w = self._val_to_pos(self.value) - self.x
+        pygame.draw.rect(screen, (70, 100, 130), (self.x, self.y, fill_w, self.height))
+        
+        # Thumb
+        thumb_x = self._val_to_pos(self.value)
+        pygame.draw.rect(screen, (150, 150, 160), (thumb_x, self.y, 10, self.height))
+        pygame.draw.rect(screen, (200, 200, 200), (thumb_x, self.y, 10, self.height), 1)
+        
+        # Label and value
+        if self.label:
+            label_surf = font.render(f"{self.label}: {self.value:.3f}", True, (180, 180, 180))
+            screen.blit(label_surf, (self.x, self.y - 14))
 
 
 class Dropdown:
@@ -436,23 +489,16 @@ def parse_formula(formula):
     f = f.replace('z_bar', 'conj(z)').replace('z̄', 'conj(z)')
     f = f.replace('e**z', 'exp(z)').replace('sin(z)+c', 'c*sin(z)').replace('cos(z)+c', 'c*cos(z)').replace('exp(z)+c', 'c*exp(z)')
     
-    # Match against patterns from settings
-    for p in _SETTINGS.get('formula_patterns', []):
-        if f == p['pattern']:
-            func_id = p['id']
-            for fn in _SETTINGS['iteration_functions']:
-                if fn['id'] == func_id:
-                    return func_id, fn['name']
+    if f in FORMULA_PATTERNS:
+        func_id = FORMULA_PATTERNS[f]
+        return func_id, FUNC_NAMES.get(func_id, 'z^2 + c')
     
-    # Try z^n + c
     match = re.match(r'^z\*\*(\d+)\+c$', f)
     if match:
         n = match.group(1)
-        power_map = _SETTINGS.get('power_to_func_id', {})
-        if n in power_map:
-            return power_map[n], f'z^{n} + c'
+        if n in POWER_TO_FUNC_ID:
+            return int(POWER_TO_FUNC_ID[n]), f'z^{n} + c'
         return None, f'z^{n} not supported (max 8)'
-    
     return None, 'Unrecognized formula'
 
 
@@ -464,15 +510,14 @@ class Menu:
         self.expanded = False
         self.font = None
         
-        defaults = _SETTINGS['default_settings']
-        self.max_iter = defaults['max_iterations']
-        self.colormap_name = defaults['colormap']
-        self.func_id = defaults['function_id']
-        self.escape_radius = defaults['escape_radius']
+        self.max_iter = DEFAULTS['max_iter']
+        self.colormap_name = DEFAULTS['colormap']
+        self.func_id = DEFAULTS['func_id']
+        self.escape_radius = DEFAULTS['escape_radius']
         
-        self.funcs = [(f['name'], f['id']) for f in _SETTINGS['iteration_functions']]
+        self.funcs = [(FUNC_NAMES[fid], fid) for fid in MENU_ORDER]
         self.colormap_names = list(COLORMAPS.keys()) + ['Custom...']
-        self.func_display = next((n for n, i in self.funcs if i == self.func_id), 'z^2 + c')
+        self.func_display = FUNC_NAMES.get(self.func_id, 'z^2 + c')
         self.custom_formula = None
         self.custom_colormap = None
         self.using_custom = False
@@ -489,6 +534,13 @@ class Menu:
         self.formula_error = None
         self.save_button_rect = None
         self.gradient_editor = GradientEditor(screen_width, screen_height)
+        
+        # Julia mode
+        self.julia_mode = False
+        self.julia_c_real = DEFAULTS.get('julia_c', [-0.7, 0.27015])[0]
+        self.julia_c_imag = DEFAULTS.get('julia_c', [-0.7, 0.27015])[1]
+        self.julia_toggle_rect = None
+        self.julia_sliders = {}
     
     def _init(self):
         if self.font is None:
@@ -497,23 +549,28 @@ class Menu:
     
     def _init_dropdowns(self):
         w = self.width - 16
-        opts = _SETTINGS
+        iter_opts, esc_opts = OPTIONS['iterations'], OPTIONS['escape_radius']
         self.dropdowns = {
-            'iter': Dropdown(self.x + 8, 0, w, [str(v) for v in opts['iteration_options']],
-                           opts['iteration_options'].index(self.max_iter) if self.max_iter in opts['iteration_options'] else 0),
+            'iter': Dropdown(self.x + 8, 0, w, [str(v) for v in iter_opts],
+                           iter_opts.index(self.max_iter) if self.max_iter in iter_opts else 0),
             'func': Dropdown(self.x + 8, 0, w, [n for n, _ in self.funcs],
                            next((i for i, (_, fid) in enumerate(self.funcs) if fid == self.func_id), 0)),
-            'escape': Dropdown(self.x + 8, 0, w, [str(v) for v in opts['escape_radius_options']],
-                              opts['escape_radius_options'].index(int(self.escape_radius)) if int(self.escape_radius) in opts['escape_radius_options'] else 0),
+            'escape': Dropdown(self.x + 8, 0, w, [str(v) for v in esc_opts],
+                              esc_opts.index(int(self.escape_radius)) if int(self.escape_radius) in esc_opts else 0),
             'color': Dropdown(self.x + 8, 0, w, self.colormap_names,
                              self.colormap_names.index(self.colormap_name) if self.colormap_name in self.colormap_names else 0),
         }
         self.func_input = TextInput(self.x + 8, 0, w, 24, "Type formula: z^3+c")
+        self.julia_sliders = {
+            'c_real': Slider(self.x + 8, 0, w, -2.0, 2.0, self.julia_c_real, "c real"),
+            'c_imag': Slider(self.x + 8, 0, w, -2.0, 2.0, self.julia_c_imag, "c imag"),
+        }
     
     def get_rect(self):
         if not self.expanded:
             return pygame.Rect(self.x, self.y, 120, 24)
-        h = 390 + (15 if self.formula_error else 0)
+        # Base height + Julia section (~50 base + ~80 if Julia mode for sliders)
+        h = 440 + (15 if self.formula_error else 0) + (80 if self.julia_mode else 0)
         for dd in self.dropdowns.values():
             if dd.expanded:
                 h += len(dd.options) * 22
@@ -537,11 +594,26 @@ class Menu:
         
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             return self._handle_click(event.pos)
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            # Handle slider release
+            if self.julia_mode and self.expanded:
+                for slider in self.julia_sliders.values():
+                    handled, _ = slider.handle_event(event)
+                    if handled:
+                        return True, False
         elif event.type == pygame.KEYDOWN:
             return self._handle_key(event)
         elif event.type == pygame.MOUSEMOTION and self.expanded:
             for dd in self.dropdowns.values():
                 dd.handle_event(event)
+            # Handle Julia slider dragging
+            if self.julia_mode:
+                for slider in self.julia_sliders.values():
+                    handled, changed = slider.handle_event(event)
+                    if handled and changed:
+                        self.julia_c_real = self.julia_sliders['c_real'].value
+                        self.julia_c_imag = self.julia_sliders['c_imag'].value
+                        return True, True  # Recompute on slider drag
         return False, False
     
     def _handle_click(self, pos):
@@ -583,6 +655,21 @@ class Menu:
             self.use_gpu = not self.use_gpu
             self.gpu_toggle_requested = True
             return True, False
+        
+        # Julia mode toggle
+        if self.julia_toggle_rect and self.julia_toggle_rect.collidepoint(mx, my):
+            self.julia_mode = not self.julia_mode
+            return True, True  # Need recompute when mode changes
+        
+        # Julia sliders (only active in Julia mode)
+        if self.julia_mode:
+            for slider in self.julia_sliders.values():
+                handled, changed = slider.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pos, button=1))
+                if handled:
+                    if changed:
+                        self.julia_c_real = self.julia_sliders['c_real'].value
+                        self.julia_c_imag = self.julia_sliders['c_imag'].value
+                    return True, changed
         
         return self.get_rect().collidepoint(mx, my), False
     
@@ -686,7 +773,36 @@ class Menu:
         screen.blit(t, (self.gpu_toggle_rect.centerx - t.get_width() // 2, self.gpu_toggle_rect.centery - t.get_height() // 2))
         y += 28
         screen.blit(self.font.render(self.gpu_device_name, True, (120, 120, 120)), (self.x + 8, y))
-        y += 26
+        y += 22
+        
+        # Julia mode section
+        screen.blit(self.font.render('Visualization Mode:', True, (180, 180, 180)), (self.x + 8, y))
+        y += 18
+        self.julia_toggle_rect = pygame.Rect(self.x + 8, y, self.width - 16, 26)
+        
+        if self.julia_mode:
+            bg, border, tc = (100, 70, 120), (150, 100, 180), (255, 220, 255)
+            label = "Julia Set (c fixed)"
+        else:
+            bg, border, tc = (70, 100, 120), (100, 150, 180), (220, 255, 255)
+            label = "Mandelbrot (z₀=0)"
+        
+        pygame.draw.rect(screen, bg, self.julia_toggle_rect)
+        pygame.draw.rect(screen, border, self.julia_toggle_rect, 1)
+        t = self.font.render(label, True, tc)
+        screen.blit(t, (self.julia_toggle_rect.centerx - t.get_width() // 2, self.julia_toggle_rect.centery - t.get_height() // 2))
+        y += 30
+        
+        # Julia c parameter sliders (only shown in Julia mode)
+        if self.julia_mode:
+            screen.blit(self.font.render('Julia c parameter:', True, (140, 140, 140)), (self.x + 8, y))
+            y += 18
+            for key in ['c_real', 'c_imag']:
+                slider = self.julia_sliders.get(key)
+                if slider:
+                    slider.x, slider.y = self.x + 8, y + 14
+                    slider.draw(screen, self.font)
+                    y += 38
         
         # Save button
         self.save_button_rect = pygame.Rect(self.x + 8, y, self.width - 16, 26)

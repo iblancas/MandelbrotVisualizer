@@ -1,27 +1,6 @@
-"""
-GPU-accelerated Mandelbrot computation using PyTorch.
-
-This module provides GPU-accelerated versions of the fractal computation
-functions. It auto-detects available hardware:
-- CUDA (NVIDIA GPUs)
-- MPS (Apple Silicon)
-- CPU fallback via PyTorch (still faster than pure Python)
-
-The GPU implementation processes all pixels simultaneously using
-tensor operations, achieving massive parallelism.
-
-Usage:
-    from compute_gpu import GPUCompute
-    
-    gpu = GPUCompute()
-    if gpu.available:
-        result = gpu.compute_mandelbrot(x_min, x_max, y_min, y_max, 
-                                         width, height, max_iter)
-"""
-
+"""GPU-accelerated fractal computation using PyTorch."""
 import numpy as np
 
-# Try to import PyTorch
 try:
     import torch
     TORCH_AVAILABLE = True
@@ -29,301 +8,137 @@ except ImportError:
     TORCH_AVAILABLE = False
     torch = None
 
+# Function IDs (must match compute.py)
+F_Z2, F_Z3, F_Z4, F_Z5, F_TRICORN, F_EXP, F_SIN, F_Z2_Z = 0, 1, 2, 3, 4, 5, 6, 7
+F_Z6, F_Z7, F_Z8, F_Z2_CZ, F_Z3_Z, F_Z4_Z, F_COS = 8, 9, 10, 11, 12, 13, 14
+F_Z2_MINUS_Z, F_CUBIC, F_Z2_C2, F_RATIONAL, F_Z3_MINUS_Z = 15, 16, 17, 18, 19
+
 
 class GPUCompute:
-    """
-    GPU-accelerated fractal computation class.
-    
-    Automatically detects and uses the best available device:
-    - CUDA for NVIDIA GPUs (recommended - significant speedup)
-    - MPS for Apple Silicon (available but may be slower than CPU for typical renders)
-    - CPU as fallback (still uses PyTorch vectorization)
-    
-    Note: For Apple Silicon (MPS), the Numba JIT CPU implementation is often
-    faster due to lower overhead. GPU mode is still available for experimentation
-    or for very large renders (4K+) with high iteration counts (2000+).
-    
-    CUDA GPUs will see better performance due to lower kernel launch overhead.
-    """
-    
-    # Function type constants (same as compute.py)
-    FUNC_Z2_PLUS_C = 0      # z² + c
-    FUNC_Z3_PLUS_C = 1      # z³ + c
-    FUNC_Z4_PLUS_C = 2      # z⁴ + c
-    FUNC_Z5_PLUS_C = 3      # z⁵ + c
-    FUNC_TRICORN = 4        # (z̄)² + c
-    FUNC_EXP = 5            # c·e^z
-    FUNC_SIN = 6            # c·sin(z)
-    FUNC_Z2_Z_C = 7         # z² + z + c
-    FUNC_Z6_PLUS_C = 8      # z⁶ + c
-    FUNC_Z7_PLUS_C = 9      # z⁷ + c
-    FUNC_Z8_PLUS_C = 10     # z⁸ + c
-    FUNC_Z2_CZ = 11         # z² + c·z
-    FUNC_Z3_Z_C = 12        # z³ + z + c
-    FUNC_Z4_Z_C = 13        # z⁴ + z + c
-    FUNC_COS = 14           # c·cos(z)
-    FUNC_Z2_MINUS_Z_C = 15  # z² - z + c
-    FUNC_CUBIC_JULIA = 16   # z·(z² + c)
-    FUNC_Z2_C2 = 17         # z² + c²
-    FUNC_RATIONAL = 18      # (z²+c)/(z²-c)
-    FUNC_Z3_MINUS_Z_C = 19  # z³ - z + c
+    """GPU-accelerated fractal computation (CUDA/MPS/CPU fallback)."""
     
     def __init__(self, prefer_gpu=True):
-        """
-        Initialize GPU compute.
-        
-        Args:
-            prefer_gpu: If False, force CPU even if GPU available
-        """
         self.available = TORCH_AVAILABLE
         self.device = None
         self.device_name = "None"
-        self.is_gpu = False
-        self.is_cuda = False
-        self.is_mps = False
-        self.dtype = torch.float32  # Default dtype
+        self.is_gpu = self.is_cuda = self.is_mps = False
+        self.dtype = torch.float32 if TORCH_AVAILABLE else None
         
         if not TORCH_AVAILABLE:
             return
         
-        # Detect best available device
         if prefer_gpu:
             if torch.cuda.is_available():
                 self.device = torch.device("cuda")
                 self.device_name = torch.cuda.get_device_name(0)
-                self.is_gpu = True
-                self.is_cuda = True
-                self.dtype = torch.float64  # CUDA supports float64
+                self.is_gpu = self.is_cuda = True
+                self.dtype = torch.float64
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
                 self.device = torch.device("mps")
                 self.device_name = "Apple Silicon GPU (MPS)"
-                self.is_gpu = True
-                self.is_mps = True
-                self.dtype = torch.float32  # MPS only supports float32
+                self.is_gpu = self.is_mps = True
             else:
                 self.device = torch.device("cpu")
                 self.device_name = "CPU (PyTorch)"
-                self.is_gpu = False
                 self.dtype = torch.float64
         else:
             self.device = torch.device("cpu")
             self.device_name = "CPU (PyTorch)"
-            self.is_gpu = False
             self.dtype = torch.float64
     
     def get_device_info(self):
-        """Return a string describing the compute device."""
-        if not self.available:
-            return "PyTorch not available"
-        return f"{self.device_name} [{self.device}]"
+        return "PyTorch not available" if not self.available else f"{self.device_name} [{self.device}]"
     
     def _complex_pow_n(self, zr, zi, n):
-        """Compute z^n for integer n using repeated squaring (vectorized)."""
-        result_r = torch.ones_like(zr)
-        result_i = torch.zeros_like(zi)
+        """Compute z^n using repeated squaring (vectorized)."""
+        result_r, result_i = torch.ones_like(zr), torch.zeros_like(zi)
         base_r, base_i = zr.clone(), zi.clone()
-        
         while n > 0:
             if n % 2 == 1:
-                new_r = result_r * base_r - result_i * base_i
-                new_i = result_r * base_i + result_i * base_r
-                result_r, result_i = new_r, new_i
-            new_r = base_r * base_r - base_i * base_i
-            new_i = 2 * base_r * base_i
-            base_r, base_i = new_r, new_i
+                result_r, result_i = result_r * base_r - result_i * base_i, result_r * base_i + result_i * base_r
+            base_r, base_i = base_r * base_r - base_i * base_i, 2 * base_r * base_i
             n //= 2
-        
         return result_r, result_i
     
     def _iterate_function(self, zr, zi, cr, ci, func_id, mask=None):
-        """
-        Apply one iteration of the selected function (vectorized).
-        
-        Args:
-            zr, zi: Real and imaginary parts of z (tensors)
-            cr, ci: Real and imaginary parts of c (tensors)
-            func_id: Which function to use
-            mask: Optional boolean mask - only compute for True positions
-        
-        Returns:
-            (new_zr, new_zi): The next z values
-        """
-        if func_id == self.FUNC_Z2_PLUS_C:
-            # z² + c
+        """Apply one iteration of the selected function (vectorized)."""
+        if func_id == F_Z2:  # z² + c
             return zr * zr - zi * zi + cr, 2 * zr * zi + ci
-        
-        elif func_id == self.FUNC_Z3_PLUS_C:
-            # z³ + c
-            zr2 = zr * zr
-            zi2 = zi * zi
+        elif func_id == F_Z3:  # z³ + c
+            zr2, zi2 = zr * zr, zi * zi
             return zr * (zr2 - 3 * zi2) + cr, zi * (3 * zr2 - zi2) + ci
-        
-        elif func_id == self.FUNC_Z4_PLUS_C:
-            # z⁴ + c
-            zr2 = zr * zr
-            zi2 = zi * zi
-            zr4 = zr2 * zr2 - 6 * zr2 * zi2 + zi2 * zi2
-            zi4 = 4 * zr * zi * (zr2 - zi2)
-            return zr4 + cr, zi4 + ci
-        
-        elif func_id == self.FUNC_Z5_PLUS_C:
-            # z⁵ + c
+        elif func_id == F_Z4:  # z⁴ + c
+            zr2, zi2 = zr * zr, zi * zi
+            return zr2 * zr2 - 6 * zr2 * zi2 + zi2 * zi2 + cr, 4 * zr * zi * (zr2 - zi2) + ci
+        elif func_id == F_Z5:  # z⁵ + c
             pr, pi = self._complex_pow_n(zr, zi, 5)
             return pr + cr, pi + ci
-        
-        elif func_id == self.FUNC_TRICORN:
-            # (z̄)² + c = conjugate squared
+        elif func_id == F_TRICORN:  # (z̄)² + c
             return zr * zr - zi * zi + cr, -2 * zr * zi + ci
-        
-        elif func_id == self.FUNC_EXP:
-            # c·e^z
+        elif func_id == F_EXP:  # c·e^z
             exp_zr = torch.exp(torch.clamp(zr, max=700))
-            cos_zi = torch.cos(zi)
-            sin_zi = torch.sin(zi)
+            cos_zi, sin_zi = torch.cos(zi), torch.sin(zi)
             return cr * exp_zr * cos_zi - ci * exp_zr * sin_zi, cr * exp_zr * sin_zi + ci * exp_zr * cos_zi
-        
-        elif func_id == self.FUNC_SIN:
-            # c·sin(z)
-            sin_zr = torch.sin(zr)
-            cos_zr = torch.cos(zr)
-            sinh_zi = torch.sinh(torch.clamp(zi, -700, 700))
-            cosh_zi = torch.cosh(torch.clamp(zi, -700, 700))
-            wr = sin_zr * cosh_zi
-            wi = cos_zr * sinh_zi
+        elif func_id == F_SIN:  # c·sin(z)
+            sin_zr, cos_zr = torch.sin(zr), torch.cos(zr)
+            sinh_zi, cosh_zi = torch.sinh(torch.clamp(zi, -700, 700)), torch.cosh(torch.clamp(zi, -700, 700))
+            wr, wi = sin_zr * cosh_zi, cos_zr * sinh_zi
             return cr * wr - ci * wi, cr * wi + ci * wr
-        
-        elif func_id == self.FUNC_Z2_Z_C:
-            # z² + z + c
+        elif func_id == F_Z2_Z:  # z² + z + c
             return zr * zr - zi * zi + zr + cr, 2 * zr * zi + zi + ci
-        
-        elif func_id == self.FUNC_Z6_PLUS_C:
+        elif func_id == F_Z6:  # z⁶ + c
             pr, pi = self._complex_pow_n(zr, zi, 6)
             return pr + cr, pi + ci
-        
-        elif func_id == self.FUNC_Z7_PLUS_C:
+        elif func_id == F_Z7:  # z⁷ + c
             pr, pi = self._complex_pow_n(zr, zi, 7)
             return pr + cr, pi + ci
-        
-        elif func_id == self.FUNC_Z8_PLUS_C:
+        elif func_id == F_Z8:  # z⁸ + c
             pr, pi = self._complex_pow_n(zr, zi, 8)
             return pr + cr, pi + ci
-        
-        elif func_id == self.FUNC_Z2_CZ:
-            # z² + c·z
-            z2r = zr * zr - zi * zi
-            z2i = 2 * zr * zi
-            czr = cr * zr - ci * zi
-            czi = cr * zi + ci * zr
-            return z2r + czr, z2i + czi
-        
-        elif func_id == self.FUNC_Z3_Z_C:
-            # z³ + z + c
-            zr2 = zr * zr
-            zi2 = zi * zi
-            z3r = zr * (zr2 - 3 * zi2)
-            z3i = zi * (3 * zr2 - zi2)
-            return z3r + zr + cr, z3i + zi + ci
-        
-        elif func_id == self.FUNC_Z4_Z_C:
-            # z⁴ + z + c
+        elif func_id == F_Z2_CZ:  # z² + c·z
+            z2r, z2i = zr * zr - zi * zi, 2 * zr * zi
+            return z2r + cr * zr - ci * zi, z2i + cr * zi + ci * zr
+        elif func_id == F_Z3_Z:  # z³ + z + c
+            zr2, zi2 = zr * zr, zi * zi
+            return zr * (zr2 - 3 * zi2) + zr + cr, zi * (3 * zr2 - zi2) + zi + ci
+        elif func_id == F_Z4_Z:  # z⁴ + z + c
             pr, pi = self._complex_pow_n(zr, zi, 4)
             return pr + zr + cr, pi + zi + ci
-        
-        elif func_id == self.FUNC_COS:
-            # c·cos(z)
-            cos_zr = torch.cos(zr)
-            sin_zr = torch.sin(zr)
-            sinh_zi = torch.sinh(torch.clamp(zi, -700, 700))
-            cosh_zi = torch.cosh(torch.clamp(zi, -700, 700))
-            wr = cos_zr * cosh_zi
-            wi = -sin_zr * sinh_zi
+        elif func_id == F_COS:  # c·cos(z)
+            cos_zr, sin_zr = torch.cos(zr), torch.sin(zr)
+            sinh_zi, cosh_zi = torch.sinh(torch.clamp(zi, -700, 700)), torch.cosh(torch.clamp(zi, -700, 700))
+            wr, wi = cos_zr * cosh_zi, -sin_zr * sinh_zi
             return cr * wr - ci * wi, cr * wi + ci * wr
-        
-        elif func_id == self.FUNC_Z2_MINUS_Z_C:
-            # z² - z + c
+        elif func_id == F_Z2_MINUS_Z:  # z² - z + c
             return zr * zr - zi * zi - zr + cr, 2 * zr * zi - zi + ci
-        
-        elif func_id == self.FUNC_CUBIC_JULIA:
-            # z·(z² + c) = z³ + c·z
-            zr2 = zr * zr
-            zi2 = zi * zi
-            z3r = zr * (zr2 - 3 * zi2)
-            z3i = zi * (3 * zr2 - zi2)
-            czr = cr * zr - ci * zi
-            czi = cr * zi + ci * zr
-            return z3r + czr, z3i + czi
-        
-        elif func_id == self.FUNC_Z2_C2:
-            # z² + c²
-            z2r = zr * zr - zi * zi
-            z2i = 2 * zr * zi
-            c2r = cr * cr - ci * ci
-            c2i = 2 * cr * ci
-            return z2r + c2r, z2i + c2i
-        
-        elif func_id == self.FUNC_RATIONAL:
-            # (z² + c) / (z² - c)
-            z2r = zr * zr - zi * zi
-            z2i = 2 * zr * zi
-            num_r = z2r + cr
-            num_i = z2i + ci
-            den_r = z2r - cr
-            den_i = z2i - ci
-            den_mag2 = den_r * den_r + den_i * den_i
-            # Avoid division by zero
-            den_mag2 = torch.clamp(den_mag2, min=1e-10)
+        elif func_id == F_CUBIC:  # z³ + c·z
+            zr2, zi2 = zr * zr, zi * zi
+            z3r, z3i = zr * (zr2 - 3 * zi2), zi * (3 * zr2 - zi2)
+            return z3r + cr * zr - ci * zi, z3i + cr * zi + ci * zr
+        elif func_id == F_Z2_C2:  # z² + c²
+            return zr * zr - zi * zi + cr * cr - ci * ci, 2 * zr * zi + 2 * cr * ci
+        elif func_id == F_RATIONAL:  # (z² + c) / (z² - c)
+            z2r, z2i = zr * zr - zi * zi, 2 * zr * zi
+            num_r, num_i = z2r + cr, z2i + ci
+            den_r, den_i = z2r - cr, z2i - ci
+            den_mag2 = torch.clamp(den_r * den_r + den_i * den_i, min=1e-10)
             return (num_r * den_r + num_i * den_i) / den_mag2, (num_i * den_r - num_r * den_i) / den_mag2
-        
-        elif func_id == self.FUNC_Z3_MINUS_Z_C:
-            # z³ - z + c
-            zr2 = zr * zr
-            zi2 = zi * zi
-            z3r = zr * (zr2 - 3 * zi2)
-            z3i = zi * (3 * zr2 - zi2)
-            return z3r - zr + cr, z3i - zi + ci
-        
-        # Default: z² + c
+        elif func_id == F_Z3_MINUS_Z:  # z³ - z + c
+            zr2, zi2 = zr * zr, zi * zi
+            return zr * (zr2 - 3 * zi2) - zr + cr, zi * (3 * zr2 - zi2) - zi + ci
         return zr * zr - zi * zi + cr, 2 * zr * zi + ci
-    
+
     def _is_transcendental(self, func_id):
-        """Check if the function is transcendental."""
-        return func_id in (self.FUNC_SIN, self.FUNC_COS, self.FUNC_EXP)
-    
+        return func_id in (F_SIN, F_COS, F_EXP)
+
     def _get_function_degree(self, func_id):
-        """Get the polynomial degree for smooth coloring."""
-        degrees = {
-            self.FUNC_Z2_PLUS_C: 2.0, self.FUNC_TRICORN: 2.0, self.FUNC_Z2_Z_C: 2.0,
-            self.FUNC_Z2_CZ: 2.0, self.FUNC_Z2_MINUS_Z_C: 2.0, self.FUNC_Z2_C2: 2.0,
-            self.FUNC_RATIONAL: 2.0,
-            self.FUNC_Z3_PLUS_C: 3.0, self.FUNC_Z3_Z_C: 3.0, self.FUNC_CUBIC_JULIA: 3.0,
-            self.FUNC_Z3_MINUS_Z_C: 3.0,
-            self.FUNC_Z4_PLUS_C: 4.0, self.FUNC_Z4_Z_C: 4.0,
-            self.FUNC_Z5_PLUS_C: 5.0,
-            self.FUNC_Z6_PLUS_C: 6.0,
-            self.FUNC_Z7_PLUS_C: 7.0,
-            self.FUNC_Z8_PLUS_C: 8.0,
-        }
-        return degrees.get(func_id, 2.0)
-    
+        degrees = (2, 3, 4, 5, 2, 2, 2, 2, 6, 7, 8, 2, 3, 4, 2, 2, 3, 2, 2, 3)
+        return float(degrees[func_id]) if func_id < 20 else 2.0
+
     def compute_mandelbrot(self, x_min, x_max, y_min, y_max, width, height, max_iter,
-                           func_id=0, escape_radius=2.0):
-        """
-        Compute the fractal set using GPU acceleration.
-        
-        All pixels are processed in parallel using tensor operations.
-        Uses a fully vectorized approach for maximum GPU throughput.
-        
-        Args:
-            x_min, x_max: Real axis bounds
-            y_min, y_max: Imaginary axis bounds
-            width, height: Output dimensions
-            max_iter: Maximum iterations
-            func_id: Function type (default 0 = z² + c)
-            escape_radius: Escape threshold
-        
-        Returns:
-            numpy array (height, width) of float64 smooth iteration counts
-        """
+                           func_id=0, escape_radius=2.0,
+                           julia_mode=False, julia_c_real=0.0, julia_c_imag=0.0):
+        """Compute fractal using GPU acceleration."""
         if not self.available:
             raise RuntimeError("PyTorch not available")
         
@@ -331,14 +146,23 @@ class GPUCompute:
         x = torch.linspace(x_min, x_max, width, device=self.device, dtype=self.dtype)
         y = torch.linspace(y_min, y_max, height, device=self.device, dtype=self.dtype)
         
-        # Create 2D meshgrid: cr[y, x] and ci[y, x]
-        cr, ci = torch.meshgrid(x, y, indexing='xy')
-        cr = cr.T.contiguous()  # Shape: (height, width)
-        ci = ci.T.contiguous()
+        # Create 2D meshgrid
+        grid_x, grid_y = torch.meshgrid(x, y, indexing='xy')
+        grid_x = grid_x.T.contiguous()  # Shape: (height, width)
+        grid_y = grid_y.T.contiguous()
         
-        # Initialize z to 0
-        zr = torch.zeros_like(cr)
-        zi = torch.zeros_like(ci)
+        # Julia mode: points are z₀, c is fixed
+        # Mandelbrot mode: points are c, z₀ is 0
+        if julia_mode:
+            zr = grid_x.clone()
+            zi = grid_y.clone()
+            cr = torch.full_like(grid_x, julia_c_real)
+            ci = torch.full_like(grid_y, julia_c_imag)
+        else:
+            zr = torch.zeros_like(grid_x)
+            zi = torch.zeros_like(grid_y)
+            cr = grid_x.clone()
+            ci = grid_y.clone()
         
         # Escape parameters
         is_trans = self._is_transcendental(func_id)
@@ -397,51 +221,22 @@ class GPUCompute:
     
     def compute_mandelbrot_partial(self, x_min, x_max, y_min, y_max, width, height, max_iter,
                                     result_array, start_x, start_y, compute_w, compute_h,
-                                    func_id=0, escape_radius=2.0):
-        """
-        Compute fractal for a sub-region, writing into an existing array.
-        
-        Args:
-            x_min, x_max, y_min, y_max: Full image bounds
-            width, height: Full image dimensions
-            max_iter: Maximum iterations
-            result_array: Output array to write into
-            start_x, start_y: Top-left corner of sub-region
-            compute_w, compute_h: Size of sub-region
-            func_id: Function type
-            escape_radius: Escape threshold
-        """
+                                    func_id=0, escape_radius=2.0,
+                                    julia_mode=False, julia_c_real=0.0, julia_c_imag=0.0):
+        """Compute fractal for a sub-region."""
         if not self.available:
             raise RuntimeError("PyTorch not available")
-        
-        # Calculate bounds for sub-region
-        dx = (x_max - x_min) / width
-        dy = (y_max - y_min) / height
-        
-        sub_x_min = x_min + dx * start_x
-        sub_x_max = x_min + dx * (start_x + compute_w)
-        sub_y_min = y_min + dy * start_y
-        sub_y_max = y_min + dy * (start_y + compute_h)
-        
-        # Compute sub-region
+        dx, dy = (x_max - x_min) / width, (y_max - y_min) / height
         sub_result = self.compute_mandelbrot(
-            sub_x_min, sub_x_max, sub_y_min, sub_y_max,
-            compute_w, compute_h, max_iter, func_id, escape_radius
+            x_min + dx * start_x, x_min + dx * (start_x + compute_w),
+            y_min + dy * start_y, y_min + dy * (start_y + compute_h),
+            compute_w, compute_h, max_iter, func_id, escape_radius,
+            julia_mode, julia_c_real, julia_c_imag
         )
-        
-        # Write into result array
         result_array[start_y:start_y+compute_h, start_x:start_x+compute_w] = sub_result
     
     def apply_colormap_smooth(self, data, max_iter, colormap, out):
-        """
-        Apply a colormap to iteration data with smooth interpolation.
-        
-        Args:
-            data: numpy array of iteration counts
-            max_iter: Maximum iteration value
-            colormap: Nx3 numpy array of RGB colors (uint8)
-            out: Output RGB image array
-        """
+        """Apply colormap with smooth interpolation."""
         if not self.available:
             raise RuntimeError("PyTorch not available")
         
@@ -476,70 +271,30 @@ class GPUCompute:
         out[:] = out_t.cpu().numpy().astype(np.uint8)
     
     def downscale_2x(self, src, dst):
-        """
-        Downscale an image by 2x using box filter.
-        
-        Args:
-            src: Source image (2*height, 2*width, 3)
-            dst: Destination image (height, width, 3)
-        """
+        """Downscale image by 2x using box filter."""
         if not self.available:
             raise RuntimeError("PyTorch not available")
-        
-        # Convert to tensor and reorder to (C, H, W)
-        src_t = torch.from_numpy(src).to(self.device).float()
-        src_t = src_t.permute(2, 0, 1).unsqueeze(0)  # (1, 3, H, W)
-        
-        # Use avg_pool2d for 2x downscaling
-        dst_t = torch.nn.functional.avg_pool2d(src_t, kernel_size=2, stride=2)
-        
-        # Convert back
-        dst_t = dst_t.squeeze(0).permute(1, 2, 0)
+        src_t = torch.from_numpy(src).to(self.device).float().permute(2, 0, 1).unsqueeze(0)
+        dst_t = torch.nn.functional.avg_pool2d(src_t, kernel_size=2, stride=2).squeeze(0).permute(1, 2, 0)
         dst[:] = dst_t.cpu().numpy().astype(np.uint8)
     
     def warmup(self, colormap):
-        """
-        Warm up GPU by running small computations.
-        
-        Args:
-            colormap: A colormap array for testing
-        """
+        """Warm up GPU by running small computations."""
         if not self.available:
             return
-        
-        # Small warmup computation
         _ = self.compute_mandelbrot(-2, 1, -1, 1, 32, 32, 32)
-        
-        # Warmup colormap
-        dummy = np.zeros((32, 32, 3), dtype=np.uint8)
-        dummy_data = np.zeros((32, 32), dtype=np.float64)
-        self.apply_colormap_smooth(dummy_data, 32, colormap, dummy)
-        
-        # Warmup downscale
-        dummy_hi = np.zeros((64, 64, 3), dtype=np.uint8)
+        dummy, dummy_hi = np.zeros((32, 32, 3), dtype=np.uint8), np.zeros((64, 64, 3), dtype=np.uint8)
+        self.apply_colormap_smooth(np.zeros((32, 32), dtype=np.float64), 32, colormap, dummy)
         self.downscale_2x(dummy_hi, dummy)
-        
-        # Sync to ensure warmup completed
         if self.device.type == 'cuda':
             torch.cuda.synchronize()
 
 
-# Global instance for easy access
 _gpu_compute = None
 
 
 def get_gpu_compute(prefer_gpu=True):
-    """
-    Get the global GPU compute instance.
-    
-    Creates the instance on first call.
-    
-    Args:
-        prefer_gpu: If False, force CPU mode
-    
-    Returns:
-        GPUCompute instance
-    """
+    """Get the global GPU compute instance (creates on first call)."""
     global _gpu_compute
     if _gpu_compute is None:
         _gpu_compute = GPUCompute(prefer_gpu=prefer_gpu)
@@ -552,20 +307,9 @@ def is_gpu_available():
 
 
 def is_cuda_available():
-    """Check if CUDA GPU is available (recommended for GPU mode)."""
     return TORCH_AVAILABLE and get_gpu_compute().is_cuda
 
 
 def should_default_to_gpu():
-    """
-    Check if GPU should be enabled by default.
-    
-    Returns True only for CUDA GPUs where GPU acceleration provides
-    a clear benefit. For MPS (Apple Silicon), the Numba CPU implementation
-    is typically faster, so we default to CPU.
-    """
-    if not TORCH_AVAILABLE:
-        return False
-    gpu = get_gpu_compute()
-    # Only default to GPU for CUDA (where it's clearly beneficial)
-    return gpu.is_cuda
+    """Return True only for CUDA GPUs where GPU provides clear benefit."""
+    return TORCH_AVAILABLE and get_gpu_compute().is_cuda
