@@ -5,13 +5,9 @@ Or from inside the folder: python __main__.py
 import sys
 import os
 
-# Handle both direct execution and module execution
+# When run directly, ensure we can find our modules
 if __name__ == "__main__":
-    # When run directly, add parent directory to path for imports
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from MandelbrotVisualizer.app import run
-    run()
-else:
-    # When run as module (python -m MandelbrotVisualizer)
-    from .app import run
+    # Add this directory to path for absolute imports
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from app import run
     run()

@@ -1,12 +1,12 @@
 """Asynchronous Mandelbrot renderer with caching and prefetching."""
 import numpy as np
 import threading
-from .compute import (compute_mandelbrot, compute_mandelbrot_partial, compute_mandelbrot_custom,
+from compute import (compute_mandelbrot, compute_mandelbrot_partial, compute_mandelbrot_custom,
                       prepare_custom_formula, apply_colormap_smooth, downscale_2x)
-from .colormaps import get_default_colormap
+from colormaps import get_default_colormap
 
 try:
-    from .compute_gpu import get_gpu_compute, is_gpu_available, should_default_to_gpu
+    from compute_gpu import get_gpu_compute, is_gpu_available, should_default_to_gpu
     GPU_AVAILABLE = True
 except ImportError:
     GPU_AVAILABLE = False
