@@ -27,6 +27,13 @@ from constants import (
 from custom_formula import validate_custom_formula
 from menu.widgets import TextInput, Slider, Dropdown
 from menu.gradient_editor import GradientEditor
+from sphere.modes import (
+    PLANE_MODE,
+    SPHERE_PARAMETER_MODE,
+    SPHERE_JULIA_MODE,
+    DOMAIN_MODE_LABELS,
+    DOMAIN_LABEL_TO_MODE,
+)
 
 
 def parse_formula(formula):
@@ -181,6 +188,8 @@ class Menu:
         self.julia_mode = False
         self.julia_c_real = julia_c_default[0]
         self.julia_c_imag = julia_c_default[1]
+        self.domain_mode = PLANE_MODE
+        self.domain_toggle_rect = None
         self.julia_toggle_rect = None
         self.julia_sliders = {}
     
@@ -207,6 +216,14 @@ class Menu:
             self.x + 8, 0, w,
             [str(v) for v in iter_opts],
             iter_opts.index(self.max_iter) if self.max_iter in iter_opts else 0
+        )
+
+        # Domain mode dropdown
+        domain_options = list(DOMAIN_MODE_LABELS.values())
+        self.dropdowns['domain'] = Dropdown(
+            self.x + 8, 0, w,
+            domain_options,
+            domain_options.index(DOMAIN_MODE_LABELS[self.domain_mode]),
         )
         
         # Function selection dropdown
@@ -312,6 +329,7 @@ class Menu:
 
         # Check dropdowns
         handlers = [
+            ('domain', self._on_domain_change),
             ('iter', lambda v: setattr(self, 'max_iter', int(v))),
             ('func', self._on_func_change),
             ('escape', lambda v: setattr(self, 'escape_radius', float(v))),
@@ -355,7 +373,7 @@ class Menu:
             return True, True  # Recompute when mode changes
         
         # Julia sliders (only in Julia mode)
-        if self.julia_mode:
+        if self._show_julia_controls():
             for slider in self.julia_sliders.values():
                 handled, changed = slider.handle_event(
                     pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pos, button=1)
@@ -370,7 +388,7 @@ class Menu:
     
     def _handle_mouse_up(self, event):
         """Handle mouse button release for slider interactions."""
-        if self.julia_mode:
+        if self._show_julia_controls():
             for slider in self.julia_sliders.values():
                 handled, _ = slider.handle_event(event)
                 if handled:
@@ -385,7 +403,7 @@ class Menu:
             dd.handle_event(event)
         
         # Julia slider dragging
-        if self.julia_mode:
+        if self._show_julia_controls():
             for slider in self.julia_sliders.values():
                 handled, changed = slider.handle_event(event)
                 if handled and changed:
@@ -414,6 +432,14 @@ class Menu:
         else:
             self.colormap_name = value
             self.using_custom = False
+
+    def _on_domain_change(self, value):
+        """Handle domain mode dropdown selection change."""
+        self.domain_mode = DOMAIN_LABEL_TO_MODE.get(value, PLANE_MODE)
+
+    def _show_julia_controls(self):
+        """Return True when Julia c sliders should be visible."""
+        return self.domain_mode == SPHERE_JULIA_MODE or self.julia_mode
     
     def _handle_key(self, event):
         """
@@ -486,6 +512,7 @@ class Menu:
         
         # Draw each section: label + dropdown + optional extras
         sections = [
+            ('Domain:', 'domain', None),
             ('Max Iterations:', 'iter', None),
             ('Function f(z):', 'func', 'input'),
             ('Escape Radius:', 'escape', None),
@@ -598,6 +625,46 @@ class Menu:
     
     def _draw_julia_section(self, screen, y):
         """Draw the Julia/Mandelbrot mode toggle section."""
+        if self.domain_mode == SPHERE_PARAMETER_MODE:
+            screen.blit(
+                self.font.render('Sphere mode: parameter plane on Riemann sphere', True, (140, 140, 140)),
+                (self.x + 8, y)
+            )
+            y += 18
+            screen.blit(
+                self.font.render('Drag in viewport to rotate sphere', True, (120, 120, 120)),
+                (self.x + 8, y)
+            )
+            y += 20
+            return y
+
+        if self.domain_mode == SPHERE_JULIA_MODE:
+            screen.blit(
+                self.font.render('Sphere Julia mode (c fixed):', True, (180, 180, 180)),
+                (self.x + 8, y)
+            )
+            y += 20
+            screen.blit(
+                self.font.render('Drag in viewport to rotate sphere', True, (120, 120, 120)),
+                (self.x + 8, y)
+            )
+            y += 20
+
+            screen.blit(
+                self.font.render('Julia c parameter:', True, (140, 140, 140)),
+                (self.x + 8, y)
+            )
+            y += 18
+
+            for key in ['c_real', 'c_imag']:
+                slider = self.julia_sliders.get(key)
+                if slider:
+                    slider.x, slider.y = self.x + 8, y + 14
+                    slider.draw(screen, self.font)
+                    y += 43
+
+            return y
+
         screen.blit(
             self.font.render('Visualization Mode:', True, (180, 180, 180)),
             (self.x + 8, y)

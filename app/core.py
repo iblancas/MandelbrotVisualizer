@@ -20,8 +20,10 @@ import atexit
 import pygame
 
 from app.input_handler import InputHandler
+from app.sphere_input import SphereInputController
 from app.display import DisplayManager
 from app.image_export import ImageExporter
+from sphere.modes import PLANE_MODE, SPHERE_JULIA_MODE
 
 
 class MandelbrotApp:
@@ -82,6 +84,7 @@ class MandelbrotApp:
         
         # Components (initialized in run)
         self.input_handler = None
+        self.sphere_input = None
         self.display = None
         self.exporter = None
         self.renderer = None
@@ -161,6 +164,7 @@ class MandelbrotApp:
         
         # Create components using visualization size
         self.input_handler = InputHandler(self.viz_size, self.viz_size)
+        self.sphere_input = SphereInputController(self.viz_size, self.viz_size)
         self.display = DisplayManager(self.viz_size, self.SIDEBAR_WIDTH)
         self.exporter = ImageExporter(self.viz_size, self.viz_size)
         
@@ -290,31 +294,51 @@ class MandelbrotApp:
             
             # Handle input events
             if event.type == pygame.MOUSEWHEEL:
-                new_bounds = self.input_handler.handle_zoom(
-                    event, self.bounds, self.menu.point_in_menu
-                )
-                if new_bounds:
-                    self.bounds = new_bounds
-                    self._trigger_render(current_time)
+                if not self.renderer.is_sphere_mode():
+                    new_bounds = self.input_handler.handle_zoom(
+                        event, self.bounds, self.menu.point_in_menu
+                    )
+                    if new_bounds:
+                        self.bounds = new_bounds
+                        self._trigger_render(current_time)
                     
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                self.input_handler.handle_mouse_down(
-                    event, self.bounds, self.menu.point_in_menu
-                )
+                if self.renderer.is_sphere_mode():
+                    self.sphere_input.handle_mouse_down(event)
+                else:
+                    self.input_handler.handle_mouse_down(
+                        event, self.bounds, self.menu.point_in_menu
+                    )
                 
             elif event.type == pygame.MOUSEBUTTONUP:
-                if self.input_handler.handle_mouse_up(event):
-                    self._trigger_render(current_time)
+                if self.renderer.is_sphere_mode():
+                    if self.sphere_input.handle_mouse_up(event):
+                        self._trigger_render(current_time)
+                else:
+                    if self.input_handler.handle_mouse_up(event):
+                        self._trigger_render(current_time)
                     
             elif event.type == pygame.MOUSEMOTION:
-                new_bounds = self.input_handler.handle_mouse_motion(self.bounds)
-                if new_bounds:
-                    self.bounds = new_bounds
+                if self.renderer.is_sphere_mode():
+                    changed = self.sphere_input.handle_mouse_motion(event)
+                    if changed:
+                        self.renderer.update_settings(
+                            sphere_yaw=self.sphere_input.yaw,
+                            sphere_pitch=self.sphere_input.pitch,
+                        )
+                        self.display.clear_history()
+                        self._trigger_render(current_time)
+                else:
+                    new_bounds = self.input_handler.handle_mouse_motion(self.bounds)
+                    if new_bounds:
+                        self.bounds = new_bounds
                     
             elif event.type == pygame.KEYDOWN:
                 result = self.input_handler.handle_key(event, self.DEFAULT_BOUNDS)
                 if result['reset']:
                     self.bounds = result['reset']
+                    self.sphere_input.reset()
+                    self.renderer.update_settings(sphere_yaw=0.0, sphere_pitch=0.0)
                     self.display.clear_history()
                     self._trigger_render(current_time)
                 if result['quit']:
@@ -364,9 +388,12 @@ class MandelbrotApp:
             func_id=self.menu.func_id,
             escape_radius=self.menu.escape_radius,
             custom_formula=custom_formula,
-            julia_mode=self.menu.julia_mode,
+            julia_mode=self.menu.julia_mode if self.menu.domain_mode == PLANE_MODE else self.menu.domain_mode == SPHERE_JULIA_MODE,
             julia_c_real=self.menu.julia_c_real,
-            julia_c_imag=self.menu.julia_c_imag
+            julia_c_imag=self.menu.julia_c_imag,
+            domain_mode=self.menu.domain_mode,
+            sphere_yaw=self.sphere_input.yaw,
+            sphere_pitch=self.sphere_input.pitch,
         )
 
         formula_error = self.renderer.get_last_formula_error()

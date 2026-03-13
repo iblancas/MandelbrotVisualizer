@@ -18,6 +18,14 @@ from datetime import datetime
 import numpy as np
 import pygame
 
+from sphere.compute import (
+    compute_sphere_fractal_predefined,
+    compute_sphere_fractal_custom,
+    SPHERE_PARAM_MODE_INT,
+    SPHERE_JULIA_MODE_INT,
+)
+from sphere.modes import SPHERE_PARAMETER_MODE, SPHERE_JULIA_MODE, is_sphere_mode
+
 
 class ImageExporter:
     """
@@ -147,6 +155,34 @@ class ImageExporter:
             NumPy array of iteration counts / escape values
         """
         x_min, x_max, y_min, y_max = bounds
+
+        if is_sphere_mode(renderer.domain_mode):
+            mode_int = SPHERE_PARAM_MODE_INT if renderer.domain_mode == SPHERE_PARAMETER_MODE else SPHERE_JULIA_MODE_INT
+            if renderer._prepared_formula is not None:
+                return compute_sphere_fractal_custom(
+                    width,
+                    height,
+                    renderer.max_iter,
+                    renderer._prepared_formula,
+                    renderer.escape_radius,
+                    mode_int,
+                    renderer.sphere_yaw,
+                    renderer.sphere_pitch,
+                    renderer.julia_c_real,
+                    renderer.julia_c_imag,
+                )
+            return compute_sphere_fractal_predefined(
+                width,
+                height,
+                renderer.max_iter,
+                renderer.func_id,
+                renderer.escape_radius,
+                mode_int,
+                renderer.sphere_yaw,
+                renderer.sphere_pitch,
+                renderer.julia_c_real,
+                renderer.julia_c_imag,
+            )
         
         if renderer._prepared_formula is not None:
             # Custom formula - must use CPU (Python-based iteration)

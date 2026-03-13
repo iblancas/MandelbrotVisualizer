@@ -5,6 +5,13 @@ from compute import (compute_mandelbrot, compute_mandelbrot_partial, compute_man
                       prepare_custom_formula, apply_colormap_smooth, downscale_2x)
 from colormaps import get_default_colormap
 from custom_formula import CustomFormulaError
+from sphere.compute import (
+    compute_sphere_fractal_predefined,
+    compute_sphere_fractal_custom,
+    SPHERE_PARAM_MODE_INT,
+    SPHERE_JULIA_MODE_INT,
+)
+from sphere.modes import PLANE_MODE, SPHERE_PARAMETER_MODE, SPHERE_JULIA_MODE, is_sphere_mode
 
 try:
     from compute_gpu import get_gpu_compute, is_gpu_available, should_default_to_gpu
@@ -26,6 +33,9 @@ class MandelbrotRenderer:
         self.func_id, self.escape_radius = func_id, escape_radius
         self.custom_formula, self._prepared_formula = None, None
         self.custom_formula_error = None
+        self.domain_mode = PLANE_MODE
+        self.sphere_yaw = 0.0
+        self.sphere_pitch = 0.0
         if custom_formula:
             try:
                 self.custom_formula = custom_formula
@@ -64,6 +74,15 @@ class MandelbrotRenderer:
     
     def compute_async(self, x_min, x_max, y_min, y_max):
         """Start async computation. Returns True if prefetch hit."""
+        if is_sphere_mode(self.domain_mode):
+            expanded_bounds = (x_min, x_max, y_min, y_max)
+            with self.lock:
+                self.pending_bounds = expanded_bounds
+                if not self.computing:
+                    self.computing = True
+                    threading.Thread(target=self._compute_thread, daemon=True).start()
+            return False
+
         w, h = x_max - x_min, y_max - y_min
         expanded_bounds = (x_min - w * self.margin, x_max + w * self.margin,
                           y_min - h * self.margin, y_max + h * self.margin)
@@ -116,7 +135,7 @@ class MandelbrotRenderer:
             new_h = bounds[3] - bounds[2]
             
             can_reuse = False
-            if old_cache_bounds is not None:
+            if old_cache_bounds is not None and not is_sphere_mode(self.domain_mode):
                 old_w, old_h = old_cache_bounds[1] - old_cache_bounds[0], old_cache_bounds[3] - old_cache_bounds[2]
                 r_x, r_y = new_w / old_w if old_w > 0 else 0, new_h / old_h if old_h > 0 else 0
                 can_reuse = 0.99 < r_x < 1.01 and 0.99 < r_y < 1.01
@@ -139,11 +158,40 @@ class MandelbrotRenderer:
                 self.result_ready = True
                 if self.pending_bounds is None:
                     self.computing = False
-                    self._start_prefetch(bounds)
+                    if not is_sphere_mode(self.domain_mode):
+                        self._start_prefetch(bounds)
                     break
     
     def _compute_full(self, bounds):
         """Compute full fractal for bounds."""
+        if is_sphere_mode(self.domain_mode):
+            mode_int = SPHERE_PARAM_MODE_INT if self.domain_mode == SPHERE_PARAMETER_MODE else SPHERE_JULIA_MODE_INT
+            if self._prepared_formula is not None:
+                return compute_sphere_fractal_custom(
+                    self.render_width,
+                    self.render_height,
+                    self.max_iter,
+                    self._prepared_formula,
+                    self.escape_radius,
+                    mode_int,
+                    self.sphere_yaw,
+                    self.sphere_pitch,
+                    self.julia_c_real,
+                    self.julia_c_imag,
+                )
+            return compute_sphere_fractal_predefined(
+                self.render_width,
+                self.render_height,
+                self.max_iter,
+                self.func_id,
+                self.escape_radius,
+                mode_int,
+                self.sphere_yaw,
+                self.sphere_pitch,
+                self.julia_c_real,
+                self.julia_c_imag,
+            )
+
         args = (bounds[0], bounds[1], bounds[2], bounds[3],
                 self.render_width, self.render_height, self.max_iter)
         julia_args = (self.julia_mode, self.julia_c_real, self.julia_c_imag)
@@ -231,6 +279,8 @@ class MandelbrotRenderer:
     
     def _start_prefetch(self, base_bounds):
         """Start background prefetching of adjacent regions."""
+        if is_sphere_mode(self.domain_mode):
+            return
         with self.prefetch_lock:
             if self.prefetching:
                 return
@@ -333,7 +383,8 @@ class MandelbrotRenderer:
     
     def update_settings(self, max_iter=None, colormap=None, func_id=None, escape_radius=None,
                          custom_formula=None, use_gpu=None, julia_mode=None, 
-                         julia_c_real=None, julia_c_imag=None):
+                         julia_c_real=None, julia_c_imag=None,
+                         domain_mode=None, sphere_yaw=None, sphere_pitch=None):
         """
         Update rendering settings.
         
@@ -403,6 +454,15 @@ class MandelbrotRenderer:
         if julia_c_imag is not None and julia_c_imag != self.julia_c_imag:
             self.julia_c_imag = julia_c_imag
             changed = True
+        if domain_mode is not None and domain_mode != self.domain_mode:
+            self.domain_mode = domain_mode
+            changed = True
+        if sphere_yaw is not None and sphere_yaw != self.sphere_yaw:
+            self.sphere_yaw = sphere_yaw
+            changed = True
+        if sphere_pitch is not None and sphere_pitch != self.sphere_pitch:
+            self.sphere_pitch = sphere_pitch
+            changed = True
         if changed:
             # Clear caches since settings changed
             self.cache_bounds = None
@@ -410,6 +470,10 @@ class MandelbrotRenderer:
                 self.prefetch_cache.clear()
                 self.prefetch_base_bounds = None
         return changed
+
+    def is_sphere_mode(self):
+        """Return True if current domain mode is a sphere mode."""
+        return is_sphere_mode(self.domain_mode)
 
     def get_last_formula_error(self):
         """Get the latest custom formula validation/compile error."""
