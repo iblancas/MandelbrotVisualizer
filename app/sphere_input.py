@@ -5,6 +5,10 @@ class SphereInputController:
     """Tracks drag-based yaw/pitch orientation for sphere rendering."""
 
     PITCH_LIMIT = 1.45
+    MIN_ZOOM = 0.7
+    MAX_ZOOM = 3.5
+    ZOOM_IN_FACTOR = 1.08
+    ZOOM_OUT_FACTOR = 0.92
 
     def __init__(self, viz_width, viz_height, drag_sensitivity=0.006):
         self.width = viz_width
@@ -13,6 +17,7 @@ class SphereInputController:
 
         self.yaw = 0.0
         self.pitch = 0.0
+        self.zoom = 1.0
 
         self.dragging = False
         self.last_pos = None
@@ -45,8 +50,9 @@ class SphereInputController:
         dx = mx - lx
         dy = my - ly
 
-        self.yaw += dx * self.drag_sensitivity
-        self.pitch += dy * self.drag_sensitivity
+        # Inverted sign gives camera-like interaction: drag right -> rotate right.
+        self.yaw -= dx * self.drag_sensitivity
+        self.pitch -= dy * self.drag_sensitivity
 
         if self.pitch > self.PITCH_LIMIT:
             self.pitch = self.PITCH_LIMIT
@@ -56,8 +62,24 @@ class SphereInputController:
         self.last_pos = event.pos
         return abs(dx) > 0 or abs(dy) > 0
 
+    def handle_wheel(self, event):
+        """Handle wheel zoom in sphere mode."""
+        old_zoom = self.zoom
+        if event.y > 0:
+            self.zoom *= self.ZOOM_IN_FACTOR
+        elif event.y < 0:
+            self.zoom *= self.ZOOM_OUT_FACTOR
+
+        if self.zoom < self.MIN_ZOOM:
+            self.zoom = self.MIN_ZOOM
+        elif self.zoom > self.MAX_ZOOM:
+            self.zoom = self.MAX_ZOOM
+
+        return abs(self.zoom - old_zoom) > 1e-9
+
     def reset(self):
         self.yaw = 0.0
         self.pitch = 0.0
+        self.zoom = 1.0
         self.dragging = False
         self.last_pos = None

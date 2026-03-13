@@ -294,7 +294,12 @@ class MandelbrotApp:
             
             # Handle input events
             if event.type == pygame.MOUSEWHEEL:
-                if not self.renderer.is_sphere_mode():
+                if self.renderer.is_sphere_mode():
+                    if self.sphere_input.handle_wheel(event):
+                        self.renderer.update_settings(sphere_zoom=self.sphere_input.zoom)
+                        self.display.clear_history()
+                        self._trigger_render(current_time)
+                else:
                     new_bounds = self.input_handler.handle_zoom(
                         event, self.bounds, self.menu.point_in_menu
                     )
@@ -325,6 +330,7 @@ class MandelbrotApp:
                         self.renderer.update_settings(
                             sphere_yaw=self.sphere_input.yaw,
                             sphere_pitch=self.sphere_input.pitch,
+                            sphere_zoom=self.sphere_input.zoom,
                         )
                         self.display.clear_history()
                         self._trigger_render(current_time)
@@ -338,7 +344,7 @@ class MandelbrotApp:
                 if result['reset']:
                     self.bounds = result['reset']
                     self.sphere_input.reset()
-                    self.renderer.update_settings(sphere_yaw=0.0, sphere_pitch=0.0)
+                    self.renderer.update_settings(sphere_yaw=0.0, sphere_pitch=0.0, sphere_zoom=1.0)
                     self.display.clear_history()
                     self._trigger_render(current_time)
                 if result['quit']:
@@ -394,6 +400,7 @@ class MandelbrotApp:
             domain_mode=self.menu.domain_mode,
             sphere_yaw=self.sphere_input.yaw,
             sphere_pitch=self.sphere_input.pitch,
+            sphere_zoom=self.sphere_input.zoom,
         )
 
         formula_error = self.renderer.get_last_formula_error()
@@ -459,7 +466,7 @@ class MandelbrotApp:
             current_time: Current pygame tick time
         """
         if self.pending_render:
-            if current_time - self.last_action_time > self.RENDER_DELAY_MS:
+            if self.renderer.is_sphere_mode() or current_time - self.last_action_time > self.RENDER_DELAY_MS:
                 self.renderer.compute_async(
                     self.x_min, self.x_max, 
                     self.y_min, self.y_max

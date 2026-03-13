@@ -632,7 +632,7 @@ class Menu:
             )
             y += 18
             screen.blit(
-                self.font.render('Drag in viewport to rotate sphere', True, (120, 120, 120)),
+                self.font.render('Drag: rotate sphere | Wheel: zoom', True, (120, 120, 120)),
                 (self.x + 8, y)
             )
             y += 20
@@ -645,7 +645,7 @@ class Menu:
             )
             y += 20
             screen.blit(
-                self.font.render('Drag in viewport to rotate sphere', True, (120, 120, 120)),
+                self.font.render('Drag: rotate sphere | Wheel: zoom', True, (120, 120, 120)),
                 (self.x + 8, y)
             )
             y += 20

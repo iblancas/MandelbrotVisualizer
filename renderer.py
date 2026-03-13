@@ -5,13 +5,13 @@ from compute import (compute_mandelbrot, compute_mandelbrot_partial, compute_man
                       prepare_custom_formula, apply_colormap_smooth, downscale_2x)
 from colormaps import get_default_colormap
 from custom_formula import CustomFormulaError
-from sphere.compute import (
-    compute_sphere_fractal_predefined,
-    compute_sphere_fractal_custom,
-    SPHERE_PARAM_MODE_INT,
-    SPHERE_JULIA_MODE_INT,
-)
+from sphere.compute import SPHERE_PARAM_MODE_INT, SPHERE_JULIA_MODE_INT
 from sphere.modes import PLANE_MODE, SPHERE_PARAMETER_MODE, SPHERE_JULIA_MODE, is_sphere_mode
+from sphere.texture import (
+    build_sphere_texture_predefined,
+    build_sphere_texture_custom,
+    sample_sphere_texture,
+)
 
 try:
     from compute_gpu import get_gpu_compute, is_gpu_available, should_default_to_gpu
@@ -24,6 +24,9 @@ except ImportError:
 
 class MandelbrotRenderer:
     """Async Mandelbrot rendering with caching and prefetching."""
+
+    SPHERE_TEXTURE_WIDTH = 4096
+    SPHERE_TEXTURE_HEIGHT = 2048
     
     def __init__(self, width, height, max_iter, supersample=2, margin=0.15,
                  func_id=0, escape_radius=2.0, custom_formula=None, use_gpu=None,
@@ -36,6 +39,7 @@ class MandelbrotRenderer:
         self.domain_mode = PLANE_MODE
         self.sphere_yaw = 0.0
         self.sphere_pitch = 0.0
+        self.sphere_zoom = 1.0
         if custom_formula:
             try:
                 self.custom_formula = custom_formula
@@ -71,6 +75,9 @@ class MandelbrotRenderer:
         self.prefetching = False
         self.prefetch_base_bounds = None
         self._shutdown = False
+
+        self._sphere_texture = None
+        self._sphere_texture_signature = None
     
     def compute_async(self, x_min, x_max, y_min, y_max):
         """Start async computation. Returns True if prefetch hit."""
@@ -144,14 +151,17 @@ class MandelbrotRenderer:
                 data = self._compute_incremental(bounds, old_cache_bounds, new_w, new_h)
             else:
                 data = self._compute_full(bounds)
-            
-            self.data_cache[:] = data
-            if self.use_gpu and self._gpu_compute:
-                self._gpu_compute.apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb_hi)
-                self._gpu_compute.downscale_2x(self.rgb_hi, self.rgb)
+
+            if is_sphere_mode(self.domain_mode):
+                apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb)
             else:
-                apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb_hi)
-                downscale_2x(self.rgb_hi, self.rgb)
+                self.data_cache[:] = data
+                if self.use_gpu and self._gpu_compute:
+                    self._gpu_compute.apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb_hi)
+                    self._gpu_compute.downscale_2x(self.rgb_hi, self.rgb)
+                else:
+                    apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb_hi)
+                    downscale_2x(self.rgb_hi, self.rgb)
             
             with self.lock:
                 self.cache_bounds = self.actual_bounds = bounds
@@ -165,32 +175,17 @@ class MandelbrotRenderer:
     def _compute_full(self, bounds):
         """Compute full fractal for bounds."""
         if is_sphere_mode(self.domain_mode):
-            mode_int = SPHERE_PARAM_MODE_INT if self.domain_mode == SPHERE_PARAMETER_MODE else SPHERE_JULIA_MODE_INT
-            if self._prepared_formula is not None:
-                return compute_sphere_fractal_custom(
-                    self.render_width,
-                    self.render_height,
-                    self.max_iter,
-                    self._prepared_formula,
-                    self.escape_radius,
-                    mode_int,
-                    self.sphere_yaw,
-                    self.sphere_pitch,
-                    self.julia_c_real,
-                    self.julia_c_imag,
-                )
-            return compute_sphere_fractal_predefined(
-                self.render_width,
-                self.render_height,
+            self._ensure_sphere_texture()
+            out = np.empty((self.full_height, self.full_width), dtype=np.float64)
+            sample_sphere_texture(
+                self._sphere_texture,
+                out,
                 self.max_iter,
-                self.func_id,
-                self.escape_radius,
-                mode_int,
                 self.sphere_yaw,
                 self.sphere_pitch,
-                self.julia_c_real,
-                self.julia_c_imag,
+                self.sphere_zoom,
             )
+            return out
 
         args = (bounds[0], bounds[1], bounds[2], bounds[3],
                 self.render_width, self.render_height, self.max_iter)
@@ -384,7 +379,8 @@ class MandelbrotRenderer:
     def update_settings(self, max_iter=None, colormap=None, func_id=None, escape_radius=None,
                          custom_formula=None, use_gpu=None, julia_mode=None, 
                          julia_c_real=None, julia_c_imag=None,
-                         domain_mode=None, sphere_yaw=None, sphere_pitch=None):
+                         domain_mode=None, sphere_yaw=None, sphere_pitch=None,
+                         sphere_zoom=None):
         """
         Update rendering settings.
         
@@ -405,18 +401,22 @@ class MandelbrotRenderer:
             True if any setting changed, False otherwise
         """
         changed = False
+        texture_changed = False
         if max_iter is not None and max_iter != self.max_iter:
             self.max_iter = max_iter
             changed = True
+            texture_changed = True
         if colormap is not None:
             self.colormap = colormap
             changed = True
         if func_id is not None and func_id != self.func_id:
             self.func_id = func_id
             changed = True
+            texture_changed = True
         if escape_radius is not None and escape_radius != self.escape_radius:
             self.escape_radius = escape_radius
             changed = True
+            texture_changed = True
         # Handle custom formula
         if custom_formula is not None:
             if custom_formula == '':
@@ -426,6 +426,7 @@ class MandelbrotRenderer:
                     self._prepared_formula = None
                     self.custom_formula_error = None
                     changed = True
+                    texture_changed = True
             elif custom_formula != self.custom_formula:
                 try:
                     prepared = prepare_custom_formula(custom_formula)
@@ -436,6 +437,7 @@ class MandelbrotRenderer:
                     self._prepared_formula = prepared
                     self.custom_formula_error = None
                     changed = True
+                    texture_changed = True
         # Handle GPU toggle
         if use_gpu is not None:
             want_gpu = use_gpu and GPU_AVAILABLE and is_gpu_available()
@@ -448,20 +450,27 @@ class MandelbrotRenderer:
         if julia_mode is not None and julia_mode != self.julia_mode:
             self.julia_mode = julia_mode
             changed = True
+            texture_changed = True
         if julia_c_real is not None and julia_c_real != self.julia_c_real:
             self.julia_c_real = julia_c_real
             changed = True
+            texture_changed = True
         if julia_c_imag is not None and julia_c_imag != self.julia_c_imag:
             self.julia_c_imag = julia_c_imag
             changed = True
+            texture_changed = True
         if domain_mode is not None and domain_mode != self.domain_mode:
             self.domain_mode = domain_mode
             changed = True
+            texture_changed = True
         if sphere_yaw is not None and sphere_yaw != self.sphere_yaw:
             self.sphere_yaw = sphere_yaw
             changed = True
         if sphere_pitch is not None and sphere_pitch != self.sphere_pitch:
             self.sphere_pitch = sphere_pitch
+            changed = True
+        if sphere_zoom is not None and sphere_zoom != self.sphere_zoom:
+            self.sphere_zoom = sphere_zoom
             changed = True
         if changed:
             # Clear caches since settings changed
@@ -469,11 +478,62 @@ class MandelbrotRenderer:
             with self.prefetch_lock:
                 self.prefetch_cache.clear()
                 self.prefetch_base_bounds = None
+            if texture_changed:
+                self._sphere_texture = None
+                self._sphere_texture_signature = None
         return changed
 
     def is_sphere_mode(self):
         """Return True if current domain mode is a sphere mode."""
         return is_sphere_mode(self.domain_mode)
+
+    def _get_sphere_texture_signature(self):
+        """Build signature for cached sphere texture invalidation."""
+        mode_int = SPHERE_PARAM_MODE_INT if self.domain_mode == SPHERE_PARAMETER_MODE else SPHERE_JULIA_MODE_INT
+        return (
+            mode_int,
+            self.max_iter,
+            self.func_id,
+            float(self.escape_radius),
+            self.custom_formula or '',
+            float(self.julia_c_real),
+            float(self.julia_c_imag),
+            self.SPHERE_TEXTURE_WIDTH,
+            self.SPHERE_TEXTURE_HEIGHT,
+        )
+
+    def _ensure_sphere_texture(self):
+        """Build or reuse cached sphere texture for current formula/settings."""
+        signature = self._get_sphere_texture_signature()
+        if self._sphere_texture is not None and self._sphere_texture_signature == signature:
+            return
+
+        mode_int = SPHERE_PARAM_MODE_INT if self.domain_mode == SPHERE_PARAMETER_MODE else SPHERE_JULIA_MODE_INT
+
+        if self._prepared_formula is not None:
+            self._sphere_texture = build_sphere_texture_custom(
+                self.SPHERE_TEXTURE_WIDTH,
+                self.SPHERE_TEXTURE_HEIGHT,
+                self.max_iter,
+                self._prepared_formula,
+                self.escape_radius,
+                mode_int,
+                self.julia_c_real,
+                self.julia_c_imag,
+            )
+        else:
+            self._sphere_texture = build_sphere_texture_predefined(
+                self.SPHERE_TEXTURE_WIDTH,
+                self.SPHERE_TEXTURE_HEIGHT,
+                self.max_iter,
+                self.func_id,
+                self.escape_radius,
+                mode_int,
+                self.julia_c_real,
+                self.julia_c_imag,
+            )
+
+        self._sphere_texture_signature = signature
 
     def get_last_formula_error(self):
         """Get the latest custom formula validation/compile error."""
