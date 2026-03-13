@@ -149,7 +149,7 @@ class DisplayManager:
         """
         self.render_history.clear()
     
-    def draw_frame(self, current_bounds, menu):
+    def draw_frame(self, current_bounds, menu, viz_bg_color=(0, 0, 0), use_history=True):
         """
         Draw a complete frame to the screen.
         
@@ -160,9 +160,11 @@ class DisplayManager:
         Args:
             current_bounds: Current viewing bounds in complex plane
             menu: Menu object to draw in sidebar
+            viz_bg_color: RGB background color for visualization area
+            use_history: Whether to composite historical renders behind current one
         """
-        # Clear visualization area to black
-        self.screen.fill((0, 0, 0), (0, 0, self.viz_width, self.height))
+        # Clear visualization area using the current mode's background color
+        self.screen.fill(viz_bg_color, (0, 0, self.viz_width, self.height))
         
         # Draw sidebar background
         self.screen.fill(
@@ -177,16 +179,25 @@ class DisplayManager:
         )
         
         # Draw historical renders first (oldest to newest)
-        for hist_surface, hist_bounds in self.render_history:
-            self._blit_surface_to_view(hist_surface, hist_bounds, current_bounds)
+        if use_history:
+            for hist_surface, hist_bounds in self.render_history:
+                self._blit_surface_to_view(hist_surface, hist_bounds, current_bounds)
         
         # Draw current surface on top
         if self.current_surface is not None:
-            self._blit_surface_to_view(
-                self.current_surface, 
-                self.render_bounds, 
-                current_bounds
-            )
+            if (
+                not use_history
+                and self.render_bounds == current_bounds
+                and self.current_surface.get_width() == self.viz_width
+                and self.current_surface.get_height() == self.height
+            ):
+                self.screen.blit(self.current_surface, (0, 0))
+            else:
+                self._blit_surface_to_view(
+                    self.current_surface,
+                    self.render_bounds,
+                    current_bounds
+                )
         
         # Draw menu in sidebar
         menu.draw(self.screen)

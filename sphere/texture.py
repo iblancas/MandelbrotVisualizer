@@ -147,6 +147,51 @@ def build_sphere_texture_custom(tex_w, tex_h, max_iter, prepared_formula, escape
     return texture
 
 
+def build_texture_mipmaps(base_texture, max_levels=5):
+    """Build a box-filtered mipmap pyramid from base texture."""
+    mipmaps = [base_texture]
+    current = base_texture
+
+    for _ in range(max_levels - 1):
+        h, w = current.shape
+        if h < 4 or w < 4:
+            break
+
+        h2 = h // 2
+        w2 = w // 2
+        cropped = current[:h2 * 2, :w2 * 2]
+        next_level = (
+            cropped[0::2, 0::2]
+            + cropped[0::2, 1::2]
+            + cropped[1::2, 0::2]
+            + cropped[1::2, 1::2]
+        ) * 0.25
+
+        mipmaps.append(next_level)
+        current = next_level
+
+    return mipmaps
+
+
+def choose_lod_level(zoom, dragging, level_count):
+    """Choose mipmap level for current interaction state."""
+    if level_count <= 1:
+        return 0
+
+    level = 0
+    if dragging:
+        level = 1
+    if dragging and zoom > 1.4:
+        level = 2
+    if dragging and zoom > 2.2:
+        level = 3
+
+    max_idx = level_count - 1
+    if level > max_idx:
+        return max_idx
+    return level
+
+
 @jit(nopython=True, parallel=True, fastmath=True, cache=True)
 def sample_sphere_texture(texture, out_data, max_iter, yaw, pitch, zoom):
     """Render sphere by sampling cached texture under current orientation."""

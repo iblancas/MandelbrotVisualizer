@@ -277,6 +277,69 @@ class GPUCompute:
         src_t = torch.from_numpy(src).to(self.device).float().permute(2, 0, 1).unsqueeze(0)
         dst_t = torch.nn.functional.avg_pool2d(src_t, kernel_size=2, stride=2).squeeze(0).permute(1, 2, 0)
         dst[:] = dst_t.cpu().numpy().astype(np.uint8)
+
+    def render_sphere_texture(self, texture, out_height, out_width, max_iter,
+                              yaw, pitch, zoom, colormap):
+        """Sample sphere texture on GPU and apply colormap, returning uint8 RGB."""
+        if not self.available:
+            raise RuntimeError("PyTorch not available")
+
+        tex = torch.from_numpy(texture.astype(np.float32)).to(self.device)
+        tex = tex.unsqueeze(0).unsqueeze(0)
+
+        ys = torch.linspace(-1.0, 1.0, out_height, device=self.device, dtype=torch.float32)
+        xs = torch.linspace(-1.0, 1.0, out_width, device=self.device, dtype=torch.float32)
+        gy, gx = torch.meshgrid(ys, xs, indexing='ij')
+
+        sx = gx / max(zoom, 1e-6)
+        sy = (-gy) / max(zoom, 1e-6)
+        r2 = sx * sx + sy * sy
+        inside = r2 <= 1.0
+
+        sz = torch.sqrt(torch.clamp(1.0 - r2, min=0.0))
+
+        cy = torch.cos(torch.tensor(yaw, device=self.device, dtype=torch.float32))
+        syaw = torch.sin(torch.tensor(yaw, device=self.device, dtype=torch.float32))
+        cp = torch.cos(torch.tensor(pitch, device=self.device, dtype=torch.float32))
+        sp = torch.sin(torch.tensor(pitch, device=self.device, dtype=torch.float32))
+
+        x1 = cy * sx + syaw * sz
+        z1 = -syaw * sx + cy * sz
+        y2 = cp * sy - sp * z1
+        z2 = sp * sy + cp * z1
+
+        lon = torch.atan2(z2, x1)
+        lat = torch.asin(torch.clamp(y2, -1.0, 1.0))
+
+        u = lon / torch.pi
+        v = -2.0 * lat / torch.pi
+
+        grid = torch.stack((u, v), dim=-1).unsqueeze(0)
+        sampled = torch.nn.functional.grid_sample(
+            tex,
+            grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False,
+        ).squeeze(0).squeeze(0)
+
+        sampled = torch.where(inside, sampled, torch.full_like(sampled, float(max_iter)))
+
+        colormap_t = torch.from_numpy(colormap.astype(np.float32)).to(self.device)
+        num_colors = colormap_t.shape[0]
+
+        in_set = sampled >= (max_iter - 0.5)
+        fidx = torch.clamp((sampled / max_iter) * (num_colors - 1), 0, num_colors - 1)
+        idx0 = torch.floor(fidx).long().clamp(0, num_colors - 1)
+        idx1 = (idx0 + 1).clamp(0, num_colors - 1)
+        t = (fidx - idx0.float()).unsqueeze(-1)
+
+        c0 = colormap_t[idx0]
+        c1 = colormap_t[idx1]
+        rgb = c0 * (1 - t) + c1 * t
+        rgb[in_set] = 0
+
+        return rgb.cpu().numpy().astype(np.uint8)
     
     def warmup(self, colormap):
         """Warm up GPU by running small computations."""

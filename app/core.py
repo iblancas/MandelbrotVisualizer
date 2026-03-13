@@ -143,7 +143,12 @@ class MandelbrotApp:
             self._maybe_start_render(current_time)
             
             # Draw current frame
-            self.display.draw_frame(self.bounds, self.menu)
+            self.display.draw_frame(
+                self.bounds,
+                self.menu,
+                viz_bg_color=self._get_viz_background_color(),
+                use_history=not self.renderer.is_sphere_mode(),
+            )
             
             # Maintain 60 FPS
             self.display.tick(60)
@@ -262,7 +267,12 @@ class MandelbrotApp:
         
         # Update display
         self.display.update_surface(rgb_flipped, init_bounds)
-        self.display.draw_frame(self.bounds, self.menu)
+        self.display.draw_frame(
+            self.bounds,
+            self.menu,
+            viz_bg_color=self._get_viz_background_color(),
+            use_history=not self.renderer.is_sphere_mode(),
+        )
         
         # Update title with GPU status
         gpu_status = "GPU" if self.renderer.get_gpu_info()['enabled'] else "CPU"
@@ -297,7 +307,6 @@ class MandelbrotApp:
                 if self.renderer.is_sphere_mode():
                     if self.sphere_input.handle_wheel(event):
                         self.renderer.update_settings(sphere_zoom=self.sphere_input.zoom)
-                        self.display.clear_history()
                         self._trigger_render(current_time)
                 else:
                     new_bounds = self.input_handler.handle_zoom(
@@ -309,7 +318,8 @@ class MandelbrotApp:
                     
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if self.renderer.is_sphere_mode():
-                    self.sphere_input.handle_mouse_down(event)
+                    if self.sphere_input.handle_mouse_down(event):
+                        self.renderer.update_settings(sphere_dragging=True)
                 else:
                     self.input_handler.handle_mouse_down(
                         event, self.bounds, self.menu.point_in_menu
@@ -318,6 +328,7 @@ class MandelbrotApp:
             elif event.type == pygame.MOUSEBUTTONUP:
                 if self.renderer.is_sphere_mode():
                     if self.sphere_input.handle_mouse_up(event):
+                        self.renderer.update_settings(sphere_dragging=False)
                         self._trigger_render(current_time)
                 else:
                     if self.input_handler.handle_mouse_up(event):
@@ -331,8 +342,8 @@ class MandelbrotApp:
                             sphere_yaw=self.sphere_input.yaw,
                             sphere_pitch=self.sphere_input.pitch,
                             sphere_zoom=self.sphere_input.zoom,
+                            sphere_dragging=True,
                         )
-                        self.display.clear_history()
                         self._trigger_render(current_time)
                 else:
                     new_bounds = self.input_handler.handle_mouse_motion(self.bounds)
@@ -344,8 +355,14 @@ class MandelbrotApp:
                 if result['reset']:
                     self.bounds = result['reset']
                     self.sphere_input.reset()
-                    self.renderer.update_settings(sphere_yaw=0.0, sphere_pitch=0.0, sphere_zoom=1.0)
-                    self.display.clear_history()
+                    self.renderer.update_settings(
+                        sphere_yaw=0.0,
+                        sphere_pitch=0.0,
+                        sphere_zoom=1.0,
+                        sphere_dragging=False,
+                    )
+                    if not self.renderer.is_sphere_mode():
+                        self.display.clear_history()
                     self._trigger_render(current_time)
                 if result['quit']:
                     self.running = False
@@ -401,6 +418,7 @@ class MandelbrotApp:
             sphere_yaw=self.sphere_input.yaw,
             sphere_pitch=self.sphere_input.pitch,
             sphere_zoom=self.sphere_input.zoom,
+            sphere_dragging=self.sphere_input.dragging,
         )
 
         formula_error = self.renderer.get_last_formula_error()
@@ -454,6 +472,12 @@ class MandelbrotApp:
             self.display.set_title(
                 "Mandelbrot Set - Scroll to zoom, drag to pan, R to reset"
             )
+
+    def _get_viz_background_color(self):
+        """Return the visualization-area clear color for the current mode."""
+        if self.renderer is not None and self.renderer.is_sphere_mode():
+            return tuple(int(c) for c in self.renderer.SPHERE_BG_COLOR)
+        return (0, 0, 0)
     
     def _maybe_start_render(self, current_time):
         """

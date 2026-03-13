@@ -10,6 +10,8 @@ from sphere.modes import PLANE_MODE, SPHERE_PARAMETER_MODE, SPHERE_JULIA_MODE, i
 from sphere.texture import (
     build_sphere_texture_predefined,
     build_sphere_texture_custom,
+    build_texture_mipmaps,
+    choose_lod_level,
     sample_sphere_texture,
 )
 
@@ -27,6 +29,9 @@ class MandelbrotRenderer:
 
     SPHERE_TEXTURE_WIDTH = 4096
     SPHERE_TEXTURE_HEIGHT = 2048
+    SPHERE_MIP_LEVELS = 5
+    SPHERE_BG_COLOR = np.array((215, 215, 220), dtype=np.uint8)
+    SPHERE_RIM_COLOR = np.array((120, 120, 130), dtype=np.uint8)
     
     def __init__(self, width, height, max_iter, supersample=2, margin=0.15,
                  func_id=0, escape_radius=2.0, custom_formula=None, use_gpu=None,
@@ -40,6 +45,7 @@ class MandelbrotRenderer:
         self.sphere_yaw = 0.0
         self.sphere_pitch = 0.0
         self.sphere_zoom = 1.0
+        self.sphere_dragging = False
         if custom_formula:
             try:
                 self.custom_formula = custom_formula
@@ -63,6 +69,7 @@ class MandelbrotRenderer:
         self.colormap = get_default_colormap()
         self.rgb_hi = np.zeros((self.render_height, self.render_width, 3), dtype=np.uint8)
         self.rgb = np.zeros((self.full_height, self.full_width, 3), dtype=np.uint8)
+        self.sphere_rgb = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self.data_cache = np.zeros((self.render_height, self.render_width), dtype=np.float64)
         self.cache_bounds = None
         
@@ -77,6 +84,7 @@ class MandelbrotRenderer:
         self._shutdown = False
 
         self._sphere_texture = None
+        self._sphere_texture_mips = None
         self._sphere_texture_signature = None
     
     def compute_async(self, x_min, x_max, y_min, y_max):
@@ -132,6 +140,13 @@ class MandelbrotRenderer:
                 bounds = self.pending_bounds
                 self.pending_bounds = None
                 old_cache_bounds = self.cache_bounds
+                sphere_mode = is_sphere_mode(self.domain_mode)
+                sphere_state = (
+                    float(self.sphere_yaw),
+                    float(self.sphere_pitch),
+                    float(self.sphere_zoom),
+                    bool(self.sphere_dragging),
+                ) if sphere_mode else None
             
             if bounds is None:
                 with self.lock:
@@ -142,7 +157,7 @@ class MandelbrotRenderer:
             new_h = bounds[3] - bounds[2]
             
             can_reuse = False
-            if old_cache_bounds is not None and not is_sphere_mode(self.domain_mode):
+            if old_cache_bounds is not None and not sphere_mode:
                 old_w, old_h = old_cache_bounds[1] - old_cache_bounds[0], old_cache_bounds[3] - old_cache_bounds[2]
                 r_x, r_y = new_w / old_w if old_w > 0 else 0, new_h / old_h if old_h > 0 else 0
                 can_reuse = 0.99 < r_x < 1.01 and 0.99 < r_y < 1.01
@@ -150,10 +165,14 @@ class MandelbrotRenderer:
             if can_reuse and self._prepared_formula is None and not self.use_gpu:
                 data = self._compute_incremental(bounds, old_cache_bounds, new_w, new_h)
             else:
-                data = self._compute_full(bounds)
+                data = self._compute_full(bounds, sphere_state=sphere_state)
 
-            if is_sphere_mode(self.domain_mode):
-                apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb)
+            if sphere_mode:
+                if self.use_gpu and self._gpu_compute is not None:
+                    self.sphere_rgb[:] = self._render_sphere_gpu(sphere_state)
+                else:
+                    apply_colormap_smooth(data, self.max_iter, self.colormap, self.sphere_rgb)
+                self._apply_sphere_visual_aids(self.sphere_rgb, sphere_state[2])
             else:
                 self.data_cache[:] = data
                 if self.use_gpu and self._gpu_compute:
@@ -168,22 +187,33 @@ class MandelbrotRenderer:
                 self.result_ready = True
                 if self.pending_bounds is None:
                     self.computing = False
-                    if not is_sphere_mode(self.domain_mode):
+                    if not sphere_mode:
                         self._start_prefetch(bounds)
                     break
     
-    def _compute_full(self, bounds):
+    def _compute_full(self, bounds, sphere_state=None):
         """Compute full fractal for bounds."""
         if is_sphere_mode(self.domain_mode):
+            if sphere_state is None:
+                sphere_state = (
+                    float(self.sphere_yaw),
+                    float(self.sphere_pitch),
+                    float(self.sphere_zoom),
+                    bool(self.sphere_dragging),
+                )
+            sphere_yaw, sphere_pitch, sphere_zoom, sphere_dragging = sphere_state
             self._ensure_sphere_texture()
-            out = np.empty((self.full_height, self.full_width), dtype=np.float64)
+            level_count = len(self._sphere_texture_mips) if self._sphere_texture_mips is not None else 1
+            lod_level = choose_lod_level(sphere_zoom, sphere_dragging, level_count)
+            tex = self._sphere_texture_mips[lod_level] if self._sphere_texture_mips is not None else self._sphere_texture
+            out = np.empty((self.height, self.width), dtype=np.float64)
             sample_sphere_texture(
-                self._sphere_texture,
+                tex,
                 out,
                 self.max_iter,
-                self.sphere_yaw,
-                self.sphere_pitch,
-                self.sphere_zoom,
+                sphere_yaw,
+                sphere_pitch,
+                sphere_zoom,
             )
             return out
 
@@ -373,6 +403,8 @@ class MandelbrotRenderer:
         with self.lock:
             if self.result_ready:
                 self.result_ready = False
+                if is_sphere_mode(self.domain_mode):
+                    return np.flipud(self.sphere_rgb).copy(), self.actual_bounds
                 return np.flipud(self.rgb).copy(), self.actual_bounds
         return None, None
     
@@ -380,7 +412,7 @@ class MandelbrotRenderer:
                          custom_formula=None, use_gpu=None, julia_mode=None, 
                          julia_c_real=None, julia_c_imag=None,
                          domain_mode=None, sphere_yaw=None, sphere_pitch=None,
-                         sphere_zoom=None):
+                         sphere_zoom=None, sphere_dragging=None):
         """
         Update rendering settings.
         
@@ -472,6 +504,9 @@ class MandelbrotRenderer:
         if sphere_zoom is not None and sphere_zoom != self.sphere_zoom:
             self.sphere_zoom = sphere_zoom
             changed = True
+        if sphere_dragging is not None and sphere_dragging != self.sphere_dragging:
+            self.sphere_dragging = sphere_dragging
+            changed = True
         if changed:
             # Clear caches since settings changed
             self.cache_bounds = None
@@ -480,6 +515,7 @@ class MandelbrotRenderer:
                 self.prefetch_base_bounds = None
             if texture_changed:
                 self._sphere_texture = None
+                self._sphere_texture_mips = None
                 self._sphere_texture_signature = None
         return changed
 
@@ -533,7 +569,52 @@ class MandelbrotRenderer:
                 self.julia_c_imag,
             )
 
+        self._sphere_texture_mips = build_texture_mipmaps(
+            self._sphere_texture,
+            max_levels=self.SPHERE_MIP_LEVELS,
+        )
+
         self._sphere_texture_signature = signature
+
+    def _render_sphere_gpu(self, sphere_state=None):
+        """Render sphere texture and apply colormap on GPU."""
+        if sphere_state is None:
+            sphere_state = (
+                float(self.sphere_yaw),
+                float(self.sphere_pitch),
+                float(self.sphere_zoom),
+                bool(self.sphere_dragging),
+            )
+        sphere_yaw, sphere_pitch, sphere_zoom, sphere_dragging = sphere_state
+        self._ensure_sphere_texture()
+        level_count = len(self._sphere_texture_mips) if self._sphere_texture_mips is not None else 1
+        lod_level = choose_lod_level(sphere_zoom, sphere_dragging, level_count)
+        tex = self._sphere_texture_mips[lod_level] if self._sphere_texture_mips is not None else self._sphere_texture
+        return self._gpu_compute.render_sphere_texture(
+            tex,
+            self.height,
+            self.width,
+            self.max_iter,
+            sphere_yaw,
+            sphere_pitch,
+            sphere_zoom,
+            self.colormap,
+        )
+
+    def _apply_sphere_visual_aids(self, rgb, sphere_zoom=None):
+        """Apply light background and rim outside the sphere disc."""
+        if sphere_zoom is None:
+            sphere_zoom = self.sphere_zoom
+        h, w = rgb.shape[:2]
+        ys = (1.0 - 2.0 * (np.arange(h, dtype=np.float32) + 0.5) / h) / max(sphere_zoom, 1e-6)
+        xs = (2.0 * (np.arange(w, dtype=np.float32) + 0.5) / w - 1.0) / max(sphere_zoom, 1e-6)
+        r2 = ys[:, None] * ys[:, None] + xs[None, :] * xs[None, :]
+
+        rgb[r2 > 1.0] = self.SPHERE_BG_COLOR
+
+        ring_width = 2.5 / max(min(h, w), 1)
+        rim = np.abs(np.sqrt(np.maximum(r2, 0.0)) - 1.0) <= ring_width
+        rgb[rim] = self.SPHERE_RIM_COLOR
 
     def get_last_formula_error(self):
         """Get the latest custom formula validation/compile error."""
