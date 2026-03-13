@@ -28,38 +28,47 @@ class DisplayManager:
     to screen coordinates, supporting smooth panning and zooming by
     reusing cached renders that may not exactly match the current view.
     
+    The display is split into two regions:
+    - Visualization area (left): Square region showing the fractal
+    - Sidebar (right): Menu and controls panel
+    
     The key challenge this class solves is coordinate mapping:
     - Rendered images have specific bounds in the complex plane
     - The current view may have different bounds (during pan/zoom)
     - We need to extract and scale the overlapping region correctly
     
     Attributes:
-        width: Display width in pixels
+        width: Total display width in pixels
         height: Display height in pixels
+        viz_width: Width of visualization area (square)
+        sidebar_width: Width of sidebar panel
         screen: Pygame display surface
         clock: Pygame clock for framerate control
         render_history: List of (surface, bounds) for smooth transitions
-        max_history: Maximum number of historical renders to keep
     """
     
     # Number of previous renders to keep for zoom-out transitions
-    # More history = smoother zoom-out but more memory usage
     MAX_HISTORY = 5
     
-    def __init__(self, width, height):
+    # Sidebar configuration
+    SIDEBAR_WIDTH = 280
+    SIDEBAR_BG_COLOR = (35, 35, 40)
+    
+    def __init__(self, viz_size, sidebar_width=None):
         """
         Initialize the display manager.
         
         Note: This only stores dimensions. Call init_pygame() separately
-        to actually create the display, as pygame initialization may need
-        to happen at a specific time in the application lifecycle.
+        to actually create the display.
         
         Args:
-            width: Display width in pixels
-            height: Display height in pixels
+            viz_size: Size of the square visualization area (width=height)
+            sidebar_width: Width of sidebar panel (default: SIDEBAR_WIDTH)
         """
-        self.width = width
-        self.height = height
+        self.viz_width = viz_size
+        self.height = viz_size
+        self.sidebar_width = sidebar_width or self.SIDEBAR_WIDTH
+        self.width = self.viz_width + self.sidebar_width
         
         # Pygame objects (initialized in init_pygame)
         self.screen = None
@@ -146,16 +155,28 @@ class DisplayManager:
         
         This draws the render history (oldest first) then the current
         surface, allowing smooth transitions during zoom-out.
+        The sidebar is drawn separately on the right.
         
         Args:
             current_bounds: Current viewing bounds in complex plane
-            menu: Menu object to draw on top
+            menu: Menu object to draw in sidebar
         """
-        # Clear screen to black
-        self.screen.fill((0, 0, 0))
+        # Clear visualization area to black
+        self.screen.fill((0, 0, 0), (0, 0, self.viz_width, self.height))
+        
+        # Draw sidebar background
+        self.screen.fill(
+            self.SIDEBAR_BG_COLOR, 
+            (self.viz_width, 0, self.sidebar_width, self.height)
+        )
+        
+        # Draw divider line between visualization and sidebar
+        pygame.draw.line(
+            self.screen, (70, 70, 80),
+            (self.viz_width, 0), (self.viz_width, self.height)
+        )
         
         # Draw historical renders first (oldest to newest)
-        # This provides smooth transitions during zoom-out
         for hist_surface, hist_bounds in self.render_history:
             self._blit_surface_to_view(hist_surface, hist_bounds, current_bounds)
         
@@ -167,7 +188,7 @@ class DisplayManager:
                 current_bounds
             )
         
-        # Draw menu overlay
+        # Draw menu in sidebar
         menu.draw(self.screen)
         
         # Flip double buffer to display
@@ -235,10 +256,10 @@ class DisplayManager:
         if view_w <= 0 or view_h <= 0:
             return
         
-        # Calculate destination rectangle on screen
+        # Calculate destination rectangle on screen (visualization area only)
         # Account for any clamping that occurred
-        dst_left = (src_left_c - src_left) / view_w * self.width
-        dst_right = self.width - (src_right - src_right_c) / view_w * self.width
+        dst_left = (src_left_c - src_left) / view_w * self.viz_width
+        dst_right = self.viz_width - (src_right - src_right_c) / view_w * self.viz_width
         dst_bottom = (src_bottom_c - src_bottom) / view_h * self.height
         dst_top = self.height - (src_top - src_top_c) / view_h * self.height
         

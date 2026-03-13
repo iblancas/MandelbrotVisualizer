@@ -43,21 +43,34 @@ class InputHandler:
     ZOOM_IN_FACTOR = 0.85   # 15% zoom in per scroll up
     ZOOM_OUT_FACTOR = 1.18  # 18% zoom out per scroll down (slightly asymmetric for feel)
     
-    def __init__(self, width, height):
+    def __init__(self, viz_width, viz_height):
         """
         Initialize the input handler.
         
         Args:
-            width: Window width in pixels
-            height: Window height in pixels
+            viz_width: Visualization area width in pixels
+            viz_height: Visualization area height in pixels
         """
-        self.width = width
-        self.height = height
+        self.width = viz_width
+        self.height = viz_height
         
         # Drag state tracking
         self.dragging = False
         self.drag_start = None
         self.drag_start_bounds = None
+    
+    def in_viz_area(self, pos):
+        """
+        Check if a position is within the visualization area.
+        
+        Args:
+            pos: (x, y) screen position
+            
+        Returns:
+            True if position is within the visualization area
+        """
+        x, y = pos
+        return 0 <= x < self.width and 0 <= y < self.height
     
     def screen_to_complex(self, screen_x, screen_y, bounds):
         """
@@ -101,11 +114,11 @@ class InputHandler:
             menu_check_func: Function to check if mouse is over menu
             
         Returns:
-            New bounds tuple if zoom occurred, None if zoom was blocked (e.g., mouse over menu)
+            New bounds tuple if zoom occurred, None if zoom was blocked
         """
-        # Don't zoom when mouse is over the menu
+        # Only zoom when mouse is in visualization area
         mouse_pos = pygame.mouse.get_pos()
-        if menu_check_func(mouse_pos):
+        if not self.in_viz_area(mouse_pos):
             return None
         
         x_min, x_max, y_min, y_max = bounds
@@ -150,7 +163,7 @@ class InputHandler:
             True if drag was started, False otherwise
         """
         if event.button == 1:  # Left mouse button
-            if not menu_check_func(event.pos):
+            if self.in_viz_area(event.pos):
                 self.dragging = True
                 self.drag_start = pygame.mouse.get_pos()
                 self.drag_start_bounds = bounds

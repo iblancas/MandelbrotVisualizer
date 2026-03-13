@@ -128,15 +128,18 @@ class Menu:
         """
         Initialize the settings menu.
         
+        The menu is always visible in the sidebar - there is no toggle.
+        
         Args:
             x: X position of the menu
             y: Y position of the menu
-            width: Width of the expanded menu panel
+            width: Width of the menu panel
             screen_width: Screen width for centering gradient editor
             screen_height: Screen height for centering gradient editor
         """
         self.x, self.y, self.width = x, y, width
-        self.expanded = False
+        self.height = screen_height  # Fill the sidebar
+        self.expanded = True  # Always expanded in sidebar mode
         self.font = None
         
         # Visualization parameters (loaded from defaults)
@@ -240,25 +243,10 @@ class Menu:
         Get the bounding rectangle of the menu.
         
         Returns:
-            pygame.Rect of the menu area (varies based on expanded state
-            and which dropdowns are open)
+            pygame.Rect of the menu area
         """
-        if not self.expanded:
-            return pygame.Rect(self.x, self.y, 120, 24)
-        
-        # Base height + extra for formula error + Julia sliders
-        h = 440
-        if self.formula_error:
-            h += 15
-        if self.julia_mode:
-            h += 80  # Space for two sliders
-        
-        # Add height for expanded dropdowns
-        for dd in self.dropdowns.values():
-            if dd.expanded:
-                h += len(dd.options) * 22
-        
-        return pygame.Rect(self.x, self.y, self.width, h)
+        # Menu fills the sidebar
+        return pygame.Rect(self.x, self.y, self.width, self.height - 20)
     
     def get_colormap(self):
         """
@@ -300,7 +288,7 @@ class Menu:
             return self._handle_mouse_up(event)
         elif event.type == pygame.KEYDOWN:
             return self._handle_key(event)
-        elif event.type == pygame.MOUSEMOTION and self.expanded:
+        elif event.type == pygame.MOUSEMOTION:
             return self._handle_motion(event)
         
         return False, False
@@ -308,25 +296,19 @@ class Menu:
     def _handle_click(self, pos):
         """
         Handle mouse click events.
-        
+
         Args:
             pos: (x, y) mouse position
-            
+
         Returns:
             Tuple of (handled, need_recompute)
         """
         mx, my = pos
-        
-        # Toggle button click
-        if pygame.Rect(self.x, self.y, 120, 24).collidepoint(mx, my):
-            self.expanded = not self.expanded
-            if self.expanded and not self.dropdowns:
-                self._init_dropdowns()
-            return True, False
-        
-        if not self.expanded:
+
+        # Check if click is in menu area
+        if not self.get_rect().collidepoint(mx, my):
             return False, False
-        
+
         # Check dropdowns
         handlers = [
             ('iter', lambda v: setattr(self, 'max_iter', int(v))),
@@ -334,7 +316,7 @@ class Menu:
             ('escape', lambda v: setattr(self, 'escape_radius', float(v))),
             ('color', self._on_color_change),
         ]
-        
+
         for name, on_change in handlers:
             dd = self.dropdowns.get(name)
             if dd:
@@ -387,7 +369,7 @@ class Menu:
     
     def _handle_mouse_up(self, event):
         """Handle mouse button release for slider interactions."""
-        if self.julia_mode and self.expanded:
+        if self.julia_mode:
             for slider in self.julia_sliders.values():
                 handled, _ = slider.handle_event(event)
                 if handled:
@@ -442,7 +424,7 @@ class Menu:
         Returns:
             Tuple of (handled, need_recompute)
         """
-        if not self.expanded or not self.func_input or not self.func_input.active:
+        if not self.func_input or not self.func_input.active:
             return False, False
         
         handled, changed = self.func_input.handle_event(event)
@@ -477,28 +459,24 @@ class Menu:
         """
         self._init()
         
-        # Toggle button (always visible)
-        pygame.draw.rect(screen, (60, 60, 60), (self.x, self.y, 120, 24))
-        pygame.draw.rect(screen, (120, 120, 120), (self.x, self.y, 120, 24), 1)
-        screen.blit(
-            self.font.render('Toggle Settings', True, (200, 200, 200)),
-            (self.x + 8, self.y + 5)
-        )
+        # Initialize dropdowns if not done yet
+        if not self.dropdowns:
+            self._init_dropdowns()
         
-        # Expanded panel
-        if self.expanded:
-            self._draw_expanded(screen)
+        # Draw menu content (always visible in sidebar)
+        self._draw_sidebar(screen)
         
         # Gradient editor overlay
         self.gradient_editor.draw(screen)
     
-    def _draw_expanded(self, screen):
-        """Draw the expanded menu panel with all controls."""
-        rect = self.get_rect()
-        pygame.draw.rect(screen, (40, 40, 40), rect)
-        pygame.draw.rect(screen, (100, 100, 100), rect, 1)
+    def _draw_sidebar(self, screen):
+        """Draw the sidebar menu with all controls."""
+        # Title
+        title_font = pygame.font.SysFont('Arial', 16, bold=True)
+        title = title_font.render('Settings', True, (220, 220, 220))
+        screen.blit(title, (self.x + 8, self.y + 5))
         
-        y = self.y + 10
+        y = self.y + 35
         
         # Draw each section: label + dropdown + optional extras
         sections = [

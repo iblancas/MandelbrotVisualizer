@@ -47,9 +47,9 @@ class MandelbrotApp:
     """
     
     # Default configuration
-    DEFAULT_WIDTH = 800
-    DEFAULT_HEIGHT = 800
+    DEFAULT_VIZ_SIZE = 800
     DEFAULT_MAX_ITER = 500
+    SIDEBAR_WIDTH = 280
     
     # Default view bounds - shows classic Mandelbrot overview
     # Positioned to show the full set with some margin
@@ -59,21 +59,23 @@ class MandelbrotApp:
     # Prevents starting new renders while user is actively panning/zooming
     RENDER_DELAY_MS = 25
     
-    def __init__(self, width=None, height=None, max_iter=None):
+    def __init__(self, viz_size=None, max_iter=None):
         """
         Initialize the application.
         
         Does not create pygame window - call run() to start the application.
         
         Args:
-            width: Window width in pixels (default 800)
-            height: Window height in pixels (default 800)
+            viz_size: Visualization area size in pixels (square, default 800)
             max_iter: Maximum iteration count (default 500)
         """
         # Apply defaults
-        self.width = width or self.DEFAULT_WIDTH
-        self.height = height or self.DEFAULT_HEIGHT
+        self.viz_size = viz_size or self.DEFAULT_VIZ_SIZE
         self.max_iter = max_iter or self.DEFAULT_MAX_ITER
+        
+        # Window dimensions (viz area + sidebar)
+        self.width = self.viz_size + self.SIDEBAR_WIDTH
+        self.height = self.viz_size
         
         # Current viewing bounds in complex plane
         self.x_min, self.x_max, self.y_min, self.y_max = self.DEFAULT_BOUNDS
@@ -157,23 +159,28 @@ class MandelbrotApp:
         from renderer import MandelbrotRenderer
         from menu import Menu
         
-        # Create components
-        self.input_handler = InputHandler(self.width, self.height)
-        self.display = DisplayManager(self.width, self.height)
-        self.exporter = ImageExporter(self.width, self.height)
+        # Create components using visualization size
+        self.input_handler = InputHandler(self.viz_size, self.viz_size)
+        self.display = DisplayManager(self.viz_size, self.SIDEBAR_WIDTH)
+        self.exporter = ImageExporter(self.viz_size, self.viz_size)
         
         # Initialize pygame via display manager
         self.display.init_pygame("Mandelbrot Set - Scroll to zoom, drag to pan")
         
-        # Create renderer with auto GPU detection
-        # use_gpu=None means: use CUDA if available, not MPS (stability)
+        # Create renderer with visualization dimensions
         self.renderer = MandelbrotRenderer(
-            self.width, self.height, self.max_iter, 
+            self.viz_size, self.viz_size, self.max_iter, 
             use_gpu=None
         )
         
-        # Create menu in top-right corner
-        self.menu = Menu(self.width - 250, 10)
+        # Create menu in sidebar (positioned at start of sidebar)
+        self.menu = Menu(
+            x=self.viz_size + 10, 
+            y=10, 
+            width=self.SIDEBAR_WIDTH - 20,
+            screen_width=self.width,
+            screen_height=self.height
+        )
         self.menu.max_iter = self.max_iter
         
         # Update menu with GPU status
