@@ -615,7 +615,7 @@ class Menu:
             self.julia_toggle_rect.centerx - t.get_width() // 2,
             self.julia_toggle_rect.centery - t.get_height() // 2
         ))
-        y += 30
+        y += 35
         
         # Julia c parameter sliders (only in Julia mode)
         if self.julia_mode:
@@ -630,7 +630,7 @@ class Menu:
                 if slider:
                     slider.x, slider.y = self.x + 8, y + 14
                     slider.draw(screen, self.font)
-                    y += 38
+                    y += 43
         
         return y
     
