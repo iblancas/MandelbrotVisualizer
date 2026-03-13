@@ -24,6 +24,7 @@ from colormaps import COLORMAPS
 from constants import (
     FUNC_NAMES, MENU_ORDER, FORMULA_PATTERNS, POWER_TO_FUNC_ID, DEFAULTS, OPTIONS
 )
+from custom_formula import validate_custom_formula
 from menu.widgets import TextInput, Slider, Dropdown
 from menu.gradient_editor import GradientEditor
 
@@ -436,15 +437,20 @@ class Menu:
         # Enter key submits formula
         if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
             if self.func_input.text.strip():
-                result, msg = parse_formula(self.func_input.text.strip())
+                formula_text = self.func_input.text.strip()
+                result, msg = parse_formula(formula_text)
                 if result is not None:
                     self.func_id = result
                     self.func_display = msg
                     self.custom_formula = None
                 else:
-                    # Store as custom formula (will use custom parser)
-                    self.custom_formula = self.func_input.text.strip()
-                    self.func_display = self.func_input.text.strip()
+                    _, error = validate_custom_formula(formula_text)
+                    if error:
+                        self.formula_error = error
+                        return True, False
+
+                    self.custom_formula = formula_text
+                    self.func_display = formula_text
                 self.formula_error = None
                 return True, True
         
@@ -605,7 +611,7 @@ class Menu:
             label = "Julia Set (c fixed)"
         else:
             bg, border, tc = (70, 100, 120), (100, 150, 180), (220, 255, 255)
-            label = "Mandelbrot (z₀=0)"
+            label = "Mandelbrot (z=0)"
         
         pygame.draw.rect(screen, bg, self.julia_toggle_rect)
         pygame.draw.rect(screen, border, self.julia_toggle_rect, 1)

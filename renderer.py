@@ -4,6 +4,7 @@ import threading
 from compute import (compute_mandelbrot, compute_mandelbrot_partial, compute_mandelbrot_custom,
                       prepare_custom_formula, apply_colormap_smooth, downscale_2x)
 from colormaps import get_default_colormap
+from custom_formula import CustomFormulaError
 
 try:
     from compute_gpu import get_gpu_compute, is_gpu_available, should_default_to_gpu
@@ -24,9 +25,15 @@ class MandelbrotRenderer:
         self.max_iter, self.supersample, self.margin = max_iter, supersample, margin
         self.func_id, self.escape_radius = func_id, escape_radius
         self.custom_formula, self._prepared_formula = None, None
+        self.custom_formula_error = None
         if custom_formula:
-            self.custom_formula = custom_formula
-            self._prepared_formula = prepare_custom_formula(custom_formula)
+            try:
+                self.custom_formula = custom_formula
+                self._prepared_formula = prepare_custom_formula(custom_formula)
+            except CustomFormulaError as exc:
+                self.custom_formula_error = str(exc)
+                self.custom_formula = None
+                self._prepared_formula = None
         
         self.julia_mode, self.julia_c_real, self.julia_c_imag = julia_mode, julia_c_real, julia_c_imag
         
@@ -366,11 +373,18 @@ class MandelbrotRenderer:
                 if self.custom_formula is not None:
                     self.custom_formula = None
                     self._prepared_formula = None
+                    self.custom_formula_error = None
                     changed = True
             elif custom_formula != self.custom_formula:
-                self.custom_formula = custom_formula
-                self._prepared_formula = prepare_custom_formula(custom_formula)
-                changed = True
+                try:
+                    prepared = prepare_custom_formula(custom_formula)
+                except CustomFormulaError as exc:
+                    self.custom_formula_error = str(exc)
+                else:
+                    self.custom_formula = custom_formula
+                    self._prepared_formula = prepared
+                    self.custom_formula_error = None
+                    changed = True
         # Handle GPU toggle
         if use_gpu is not None:
             want_gpu = use_gpu and GPU_AVAILABLE and is_gpu_available()
@@ -396,6 +410,10 @@ class MandelbrotRenderer:
                 self.prefetch_cache.clear()
                 self.prefetch_base_bounds = None
         return changed
+
+    def get_last_formula_error(self):
+        """Get the latest custom formula validation/compile error."""
+        return self.custom_formula_error
     
     def get_gpu_info(self):
         """

@@ -358,7 +358,7 @@ class MandelbrotApp:
         """
         custom_formula = self.menu.custom_formula if self.menu.custom_formula else ''
         
-        self.renderer.update_settings(
+        changed = self.renderer.update_settings(
             max_iter=self.menu.max_iter,
             colormap=self.menu.get_colormap(),
             func_id=self.menu.func_id,
@@ -368,6 +368,15 @@ class MandelbrotApp:
             julia_c_real=self.menu.julia_c_real,
             julia_c_imag=self.menu.julia_c_imag
         )
+
+        formula_error = self.renderer.get_last_formula_error()
+        if formula_error:
+            self.menu.formula_error = formula_error
+            return
+        self.menu.formula_error = None
+
+        if not changed:
+            return
         
         # Clear history since settings changed
         self.display.clear_history()

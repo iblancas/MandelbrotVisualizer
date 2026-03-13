@@ -269,43 +269,81 @@ def warmup_jit(colormap):
     downscale_2x(dummy_hi, dummy)
 
 
+@jit(nopython=True, parallel=True, fastmath=True, cache=True)
+def compute_mandelbrot_custom_jit(x_min, x_max, y_min, y_max, width, height, max_iter,
+                                  iter_func, escape_radius=2.0,
+                                  julia_mode=False, julia_c_real=0.0, julia_c_imag=0.0):
+    """Compute custom-formula fractal using a Numba-compiled iteration function."""
+    result = np.zeros((height, width), dtype=np.float64)
+    escape_r2 = escape_radius * escape_radius
+    log_escape = np.log(max(escape_radius, 2.0))
+    log_degree = np.log(2.0)
+    dx = np.float64(x_max - x_min) / width
+    dy = np.float64(y_max - y_min) / height
+    julia_c = np.complex128(julia_c_real + 1j * julia_c_imag)
+
+    for py in prange(height):
+        y0 = np.float64(y_min) + dy * py
+        for px in range(width):
+            x0 = np.float64(x_min) + dx * px
+
+            if julia_mode:
+                z = np.complex128(x0 + 1j * y0)
+                c = julia_c
+            else:
+                z = np.complex128(0.0 + 0.0j)
+                c = np.complex128(x0 + 1j * y0)
+
+            iteration = 0
+
+            while (z.real * z.real + z.imag * z.imag) <= escape_r2 and iteration < max_iter:
+                z = iter_func(z, c)
+                iteration += 1
+                if np.isnan(z.real) or np.isnan(z.imag) or np.isinf(z.real) or np.isinf(z.imag):
+                    break
+
+            if iteration < max_iter:
+                zn2 = z.real * z.real + z.imag * z.imag
+                if zn2 > 1.0:
+                    result[py, px] = iteration + 1 - np.log(np.log(zn2) * 0.5 / log_escape) / log_degree
+                else:
+                    result[py, px] = iteration
+            else:
+                result[py, px] = max_iter
+
+    return result
+
+
 # Custom Formula Support (non-JIT)
-import cmath, math, re
+import math
 
-_SAFE_MATH_NAMESPACE = {
-    '__builtins__': {}, 'sin': cmath.sin, 'cos': cmath.cos, 'tan': cmath.tan,
-    'exp': cmath.exp, 'log': cmath.log, 'sqrt': cmath.sqrt, 'abs': abs,
-    'conj': lambda x: complex(x.real, -x.imag), 'sinh': cmath.sinh, 'cosh': cmath.cosh,
-    'tanh': cmath.tanh, 'asin': cmath.asin, 'acos': cmath.acos, 'atan': cmath.atan,
-    'pi': cmath.pi, 'e': cmath.e, 'i': 1j, 'j': 1j,
-}
-
-_MATH_FUNCS = ['sin', 'cos', 'tan', 'exp', 'log', 'sqrt', 'abs', 'conj',
-               'sinh', 'cosh', 'tanh', 'asin', 'acos', 'atan']
+from custom_formula import (
+    PreparedCustomFormula,
+    prepare_custom_formula as _prepare_custom_formula,
+    eval_prepared_formula,
+)
 
 
 def prepare_custom_formula(formula_str):
-    """Convert mathematical notation to Python syntax for custom formulas."""
-    f = formula_str.strip().replace('^', '**')
-    f = re.sub(r'(\d)([zc])', r'\1*\2', f)
-    f = re.sub(r'([zc])([zc])', r'\1*\2', f)
-    f = re.sub(r'\)([zc(])', r')*\1', f)
-    for func in _MATH_FUNCS:
-        f = f.replace(func + '(', f'__FUNC_{func}__(')
-    f = re.sub(r'([zc])(\()', r'\1*\2', f)
-    for func in _MATH_FUNCS:
-        f = f.replace(f'__FUNC_{func}__(', func + '(')
-    return f
+    """Prepare and compile a custom formula for fast repeated evaluation."""
+    return _prepare_custom_formula(formula_str)
 
 
 def eval_custom_formula(formula_str, z, c):
-    """Evaluate a custom formula with given z and c values."""
-    namespace = _SAFE_MATH_NAMESPACE.copy()
-    namespace['z'], namespace['c'] = z, c
+    """
+    Evaluate a custom formula with given z and c values.
+
+    Accepts either a raw formula string or a PreparedCustomFormula.
+    """
     try:
-        return eval(formula_str, namespace)
+        if isinstance(formula_str, PreparedCustomFormula):
+            prepared = formula_str
+        else:
+            prepared = _prepare_custom_formula(formula_str)
     except Exception:
-        return complex(1e10, 0)  # Return large value to escape
+        return complex(1e10, 0)
+
+    return eval_prepared_formula(prepared, z, c)
 
 
 def compute_mandelbrot_custom(x_min, x_max, y_min, y_max, width, height, max_iter,
@@ -313,10 +351,36 @@ def compute_mandelbrot_custom(x_min, x_max, y_min, y_max, width, height, max_ite
                                julia_mode=False, julia_c_real=0.0, julia_c_imag=0.0):
     """Compute fractal with custom formula (non-JIT, slower but flexible)."""
     result = np.zeros((height, width), dtype=np.float64)
+
+    try:
+        prepared_formula = (
+            custom_formula
+            if isinstance(custom_formula, PreparedCustomFormula)
+            else _prepare_custom_formula(custom_formula)
+        )
+    except Exception:
+        return result
+
+    if prepared_formula.jit_iter_func is not None:
+        try:
+            return compute_mandelbrot_custom_jit(
+                x_min, x_max, y_min, y_max,
+                width, height, max_iter,
+                prepared_formula.jit_iter_func,
+                escape_radius,
+                julia_mode,
+                julia_c_real,
+                julia_c_imag,
+            )
+        except Exception:
+            # Fall back to Python evaluation path if Numba can't specialize this formula.
+            pass
+
     escape_r2, log_escape = escape_radius ** 2, math.log(max(escape_radius, 2.0))
     log_degree = math.log(2.0)  # Default degree
     dx, dy = (x_max - x_min) / width, (y_max - y_min) / height
     julia_c = complex(julia_c_real, julia_c_imag)
+    local_scope = {'z': 0j, 'c': 0j}
     
     for py in range(height):
         y0 = y_min + dy * py
@@ -327,7 +391,7 @@ def compute_mandelbrot_custom(x_min, x_max, y_min, y_max, width, height, max_ite
             iteration = 0
             try:
                 while abs(z) ** 2 <= escape_r2 and iteration < max_iter:
-                    z = eval_custom_formula(custom_formula, z, c)
+                    z = eval_prepared_formula(prepared_formula, z, c, local_scope)
                     iteration += 1
                     if math.isnan(z.real) or math.isnan(z.imag) or math.isinf(z.real) or math.isinf(z.imag):
                         break
