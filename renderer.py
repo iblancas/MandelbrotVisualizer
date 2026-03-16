@@ -69,7 +69,8 @@ class MandelbrotRenderer:
         self.colormap = get_default_colormap()
         self.rgb_hi = np.zeros((self.render_height, self.render_width, 3), dtype=np.uint8)
         self.rgb = np.zeros((self.full_height, self.full_width, 3), dtype=np.uint8)
-        self.sphere_rgb = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        # sphere_rgb is the COMPLETED frame swapped in under the lock; never written directly by the thread
+        self.sphere_rgb = None
         self.data_cache = np.zeros((self.render_height, self.render_width), dtype=np.float64)
         self.cache_bounds = None
         
@@ -168,11 +169,14 @@ class MandelbrotRenderer:
                 data = self._compute_full(bounds, sphere_state=sphere_state)
 
             if sphere_mode:
+                # Render into a private local buffer so the shared self.sphere_rgb is
+                # never written outside the lock (avoids race with get_result copy).
+                tmp_rgb = np.empty((self.height, self.width, 3), dtype=np.uint8)
                 if self.use_gpu and self._gpu_compute is not None:
-                    self.sphere_rgb[:] = self._render_sphere_gpu(sphere_state)
+                    tmp_rgb[:] = self._render_sphere_gpu(sphere_state)
                 else:
-                    apply_colormap_smooth(data, self.max_iter, self.colormap, self.sphere_rgb)
-                self._apply_sphere_visual_aids(self.sphere_rgb, sphere_state[2])
+                    apply_colormap_smooth(data, self.max_iter, self.colormap, tmp_rgb)
+                self._apply_sphere_visual_aids(tmp_rgb, sphere_state[2])
             else:
                 self.data_cache[:] = data
                 if self.use_gpu and self._gpu_compute:
@@ -181,9 +185,12 @@ class MandelbrotRenderer:
                 else:
                     apply_colormap_smooth(data, self.max_iter, self.colormap, self.rgb_hi)
                     downscale_2x(self.rgb_hi, self.rgb)
-            
+
             with self.lock:
                 self.cache_bounds = self.actual_bounds = bounds
+                if sphere_mode:
+                    # Atomic handoff: swap in completed buffer under the lock
+                    self.sphere_rgb = tmp_rgb
                 self.result_ready = True
                 if self.pending_bounds is None:
                     self.computing = False
@@ -404,7 +411,8 @@ class MandelbrotRenderer:
             if self.result_ready:
                 self.result_ready = False
                 if is_sphere_mode(self.domain_mode):
-                    return np.flipud(self.sphere_rgb).copy(), self.actual_bounds
+                    # sphere_rgb was atomically swapped in under this lock so it is safe to read
+                    return np.flipud(self.sphere_rgb), self.actual_bounds
                 return np.flipud(self.rgb).copy(), self.actual_bounds
         return None, None
     
