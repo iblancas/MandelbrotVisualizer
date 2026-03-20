@@ -188,10 +188,12 @@ class Menu:
         self.julia_mode = False
         self.julia_c_real = julia_c_default[0]
         self.julia_c_imag = julia_c_default[1]
+        self.julia_c_abs_bound = 2.0
         self.domain_mode = PLANE_MODE
         self.domain_toggle_rect = None
         self.julia_toggle_rect = None
         self.julia_sliders = {}
+        self.julia_range_slider = None
     
     def _init(self):
         """Initialize font on first draw."""
@@ -252,9 +254,11 @@ class Menu:
         
         # Julia c parameter sliders
         self.julia_sliders = {
-            'c_real': Slider(self.x + 8, 0, w, -2.0, 2.0, self.julia_c_real, "c real"),
-            'c_imag': Slider(self.x + 8, 0, w, -2.0, 2.0, self.julia_c_imag, "c imag"),
+            'c_real': Slider(self.x + 8, 0, w, -self.julia_c_abs_bound, self.julia_c_abs_bound, self.julia_c_real, "c real"),
+            'c_imag': Slider(self.x + 8, 0, w, -self.julia_c_abs_bound, self.julia_c_abs_bound, self.julia_c_imag, "c imag"),
         }
+        self.julia_range_slider = Slider(self.x + 8, 0, w, 0.25, 20.0, self.julia_c_abs_bound, "|c| bound")
+        self._set_julia_c_bound(self.julia_c_abs_bound)
     
     def get_rect(self):
         """
@@ -374,6 +378,16 @@ class Menu:
         
         # Julia sliders (only in Julia mode)
         if self._show_julia_controls():
+            if self.julia_range_slider is not None:
+                handled, changed = self.julia_range_slider.handle_event(
+                    pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pos, button=1)
+                )
+                if handled:
+                    changed_c = False
+                    if changed:
+                        changed_c = self._set_julia_c_bound(self.julia_range_slider.value)
+                    return True, changed_c
+
             for slider in self.julia_sliders.values():
                 handled, changed = slider.handle_event(
                     pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pos, button=1)
@@ -389,6 +403,10 @@ class Menu:
     def _handle_mouse_up(self, event):
         """Handle mouse button release for slider interactions."""
         if self._show_julia_controls():
+            if self.julia_range_slider is not None:
+                handled, _ = self.julia_range_slider.handle_event(event)
+                if handled:
+                    return True, False
             for slider in self.julia_sliders.values():
                 handled, _ = slider.handle_event(event)
                 if handled:
@@ -404,6 +422,14 @@ class Menu:
         
         # Julia slider dragging
         if self._show_julia_controls():
+            if self.julia_range_slider is not None:
+                handled, changed = self.julia_range_slider.handle_event(event)
+                if handled:
+                    changed_c = False
+                    if changed:
+                        changed_c = self._set_julia_c_bound(self.julia_range_slider.value)
+                    return True, changed_c
+
             for slider in self.julia_sliders.values():
                 handled, changed = slider.handle_event(event)
                 if handled and changed:
@@ -440,6 +466,36 @@ class Menu:
     def _show_julia_controls(self):
         """Return True when Julia c sliders should be visible."""
         return self.domain_mode == SPHERE_JULIA_MODE or self.julia_mode
+
+    def _set_julia_c_bound(self, abs_bound):
+        """Update symmetric Julia c slider bounds and clamp c values if needed."""
+        bound = max(0.01, float(abs_bound))
+        self.julia_c_abs_bound = bound
+
+        if self.julia_range_slider is not None:
+            self.julia_range_slider.value = bound
+
+        if not self.julia_sliders:
+            return False
+
+        real_slider = self.julia_sliders['c_real']
+        imag_slider = self.julia_sliders['c_imag']
+        real_slider.min_val = -bound
+        real_slider.max_val = bound
+        imag_slider.min_val = -bound
+        imag_slider.max_val = bound
+
+        old_real = self.julia_c_real
+        old_imag = self.julia_c_imag
+        self.julia_c_real = max(-bound, min(bound, self.julia_c_real))
+        self.julia_c_imag = max(-bound, min(bound, self.julia_c_imag))
+        real_slider.value = self.julia_c_real
+        imag_slider.value = self.julia_c_imag
+
+        return (
+            abs(self.julia_c_real - old_real) > 1e-9
+            or abs(self.julia_c_imag - old_imag) > 1e-9
+        )
     
     def _handle_key(self, event):
         """
@@ -656,6 +712,11 @@ class Menu:
             )
             y += 18
 
+            if self.julia_range_slider is not None:
+                self.julia_range_slider.x, self.julia_range_slider.y = self.x + 8, y + 14
+                self.julia_range_slider.draw(screen, self.font)
+                y += 43
+
             for key in ['c_real', 'c_imag']:
                 slider = self.julia_sliders.get(key)
                 if slider:
@@ -697,6 +758,11 @@ class Menu:
                 (self.x + 8, y)
             )
             y += 18
+
+            if self.julia_range_slider is not None:
+                self.julia_range_slider.x, self.julia_range_slider.y = self.x + 8, y + 14
+                self.julia_range_slider.draw(screen, self.font)
+                y += 43
             
             for key in ['c_real', 'c_imag']:
                 slider = self.julia_sliders.get(key)
